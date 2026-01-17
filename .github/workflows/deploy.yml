@@ -15,7 +15,7 @@ jobs:
     - name: Use Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '18.x'
+        node-version: '20.x'
         cache: 'npm'
 
     - name: Install dependencies
@@ -25,8 +25,40 @@ jobs:
       run: npm run build
 
     - name: Generate Certs/Docs
+      # This step needs env vars because it imports app code
       run: npm run docs
+      env:
+        NODE_ENV: production
+        PORT: 8080
+        MONGO_URI: ${{ secrets.MONGO_URI }}
+        REDIS_URL: ${{ secrets.REDIS_URL }}
+        REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
+        JWT_SECRET: ${{ secrets.JWT_SECRET }}
+        CLIENT_URL: ${{ secrets.CLIENT_URL }}
+        
+        # AWS Secrets
+        AWS_REGION: ${{ secrets.AWS_REGION }}
+        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        AWS_BUCKET_NAME: ${{ secrets.AWS_BUCKET_NAME }}
+        
+        # Email Secrets
+        SMTP_HOST: ${{ secrets.SMTP_HOST }}
+        SMTP_PORT: ${{ secrets.SMTP_PORT }}
+        SMTP_USER: ${{ secrets.SMTP_USER }}
+        SMTP_PASS: ${{ secrets.SMTP_PASS }}
+        EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+        
+        # OAuth (Optional - add secrets if you use them)
+        GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+        GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+        GITHUB_CLIENT_ID: ${{ secrets.GITHUB_CLIENT_ID }}
+        GITHUB_CLIENT_SECRET: ${{ secrets.GITHUB_CLIENT_SECRET }}
 
-    # Example: Deploy to AWS/Heroku/DigitalOcean
-    - name: Deploy
-      run: echo "Deployment step - add your deployment script here"
+    # NOTE: This is the final deployment step.
+    # Since you haven't chosen a provider (Render, AWS, DigitalOcean) yet,
+    # this step prints a success message.
+    # If you choose Render.com (recommended), you can actually remove this 
+    # specific step because Render auto-deploys from GitHub.
+    - name: Deploy Trigger
+      run: echo "Build successful! Ready for deployment."

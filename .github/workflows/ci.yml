@@ -10,13 +10,43 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    # These are dummy values to satisfy src/config/env.ts
+    # It is safe to expose these in this file because they are fake.
+    env:
+      NODE_ENV: test
+      PORT: 3000
+      MONGO_URI: mongodb://localhost:27017/test_db
+      REDIS_URL: redis://localhost:6379
+      REDIS_PASSWORD: dummy_redis_password
+      JWT_SECRET: test_secret_key_12345
+      CLIENT_URL: http://localhost:3000
+      
+      # AWS (Fake)
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: fake_aws_key
+      AWS_SECRET_ACCESS_KEY: fake_aws_secret
+      AWS_BUCKET_NAME: test_bucket
+      
+      # Email (Fake)
+      SMTP_HOST: smtp.example.com
+      SMTP_PORT: 587
+      SMTP_USER: test_user
+      SMTP_PASS: test_pass
+      EMAIL_FROM: no-reply@test.com
+      
+      # OAuth (Fake/Optional)
+      GOOGLE_CLIENT_ID: fake_google_id
+      GOOGLE_CLIENT_SECRET: fake_google_secret
+      GITHUB_CLIENT_ID: fake_github_id
+      GITHUB_CLIENT_SECRET: fake_github_secret
+
     steps:
     - uses: actions/checkout@v4
 
     - name: Use Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '18.x'
+        node-version: '20.x'
         cache: 'npm'
 
     - name: Install dependencies
@@ -24,7 +54,6 @@ jobs:
 
     - name: Lint
       run: npm run lint
-      continue-on-error: true # Proceed even if lint fails, as codebase currently has issues.
 
     - name: Build
       run: npm run build
