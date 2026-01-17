@@ -1,0 +1,11 @@
+{
+    "entryPoints": [
+        "./src/server.ts",
+        "./src/modules/**/*.ts"
+    ],
+    "out": "docs/api",
+    "name": "Blogify API Documentation",
+    "plugin": [],
+    "theme": "default",
+    "readme": "./README.md"
+}

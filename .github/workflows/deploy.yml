@@ -1,0 +1,32 @@
+name: Deploy
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Use Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18.x'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Build
+      run: npm run build
+
+    - name: Generate Certs/Docs
+      run: npm run docs
+
+    # Example: Deploy to AWS/Heroku/DigitalOcean
+    - name: Deploy
+      run: echo "Deployment step - add your deployment script here"
