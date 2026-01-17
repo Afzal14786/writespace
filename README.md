@@ -20,7 +20,7 @@ WriteSpace is a RESTful API built with **Node.js** and **TypeScript**, designed 
 ## 📂 Project Structure
 
 ```
-writespace-backend/
+writespace/
 ├── .github/                   # CI/CD Workflows (GitHub Actions)
 │   └── workflows/
 │       ├── test.yml           # Runs tests on Pull Request
@@ -164,8 +164,8 @@ writespace-backend/
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/your-username/writespace-backend.git
-   cd writespace-backend
+   git clone https://github.com/Afzal14786/writespace.git
+   cd writespace
    ```
 
 2. **Install dependencies**
