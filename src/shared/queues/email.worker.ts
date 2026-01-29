@@ -7,6 +7,15 @@ import { IEmailJob } from "../../modules/notification/interface/notification.int
 export const emailWorker = new Worker<IEmailJob>(
   "email-queue",
   async (job) => {
+    // Check for stale OTP jobs (> 1 minute old)
+    const now = Date.now();
+    const jobAge = now - job.timestamp;
+    
+    if (job.data.subject.includes("OTP") && jobAge > 60000) {
+      console.warn(`Skipping stale OTP email job ${job.id} (Age: ${Math.round(jobAge/1000)}s)`);
+      return;
+    }
+
     console.log(`Processing email job ${job.id} for ${job.data.to}`);
 
     await mailer.sendEmail({

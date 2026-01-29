@@ -5,7 +5,7 @@
  */
 export const emailLayout = (
   content: string,
-  title: string = "Blogify Notification",
+  title: string = "Writespace Notification",
 ) => `
 <!DOCTYPE html>
 <html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:o="urn:schemas-microsoft-com:office:office">
@@ -108,13 +108,12 @@ export const emailLayout = (
 
             <!-- Footer -->
             <div class="footer">
-                <p>&copy; ${new Date().getFullYear()} Blogify Platform.</p>
-                <p>Designed for creators, by creators.</p>
-                <p style="margin-top: 10px;">
-                    <a href="#" class="link">Unsubscribe</a> &bull; 
-                    <a href="#" class="link">Privacy Policy</a>
-                </p>
-            </div>
+        <p>&copy; ${new Date().getFullYear()} Writespace. All rights reserved.</p>
+        <p>
+          <a href="${process.env.CLIENT_URL}/privacy">Privacy Policy</a> | 
+          <a href="${process.env.CLIENT_URL}/terms">Terms of Service</a>
+        </p>
+      </div>
         </div>
     </div>
 </body>

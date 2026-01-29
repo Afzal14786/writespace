@@ -64,7 +64,7 @@ class NotificationService implements INotificationService {
     });
     await addEmailJob({
       to,
-      subject: "Welcome to Blogify! 🚀",
+      subject: "Welcome to Writespace! 🚀",
       html,
     });
 
@@ -72,7 +72,7 @@ class NotificationService implements INotificationService {
     await this.createInAppNotification(
       userId,
       NotificationType.WELCOME,
-      `Welcome to Blogify, ${username}! We're glad you're here.`,
+      `Welcome to Writespace, ${username}! We're glad you're here.`,
     );
   }
 

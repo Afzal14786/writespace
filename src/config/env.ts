@@ -21,11 +21,10 @@ const envSchema = z.object({
   AWS_BUCKET_NAME: z.string().min(1, "AWS_BUCKET_NAME is required"),
 
   // SMTP Configuration (Email)
-  SMTP_HOST: z.string().min(1, "SMTP_HOST is required"),
-  SMTP_PORT: z.coerce.number().default(465),
+  SMTP_HOST: z.string().min(1, "SMTP_HOST is required").default("smtp.gmail.com"),
+  SMTP_PORT: z.coerce.number().default(587),
   SMTP_USER: z.string().min(1, "SMTP_USER is required"),
   SMTP_PASS: z.string().min(1, "SMTP_PASS is required"),
-  EMAIL_FROM: z.string().email().default("no-reply@blogify.com"),
 
   // OAuth Configuration
   GOOGLE_CLIENT_ID: z.string().optional(),

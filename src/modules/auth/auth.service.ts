@@ -14,7 +14,7 @@ import { IOAuthProfile } from "./interface/auth.interface";
 const ACCESS_TOKEN_EXPIRE = "15m";
 const REFRESH_TOKEN_EXPIRE = "7d";
 const REFRESH_TOKEN_EXPIRE_SEC = 7 * 24 * 60 * 60; // 7 Days in seconds
-const OTP_EXPIRE_SEC = 600; // 10 Minutes
+const OTP_EXPIRE_SEC = 60; // 1 Minute
 
 class AuthService {
   /**

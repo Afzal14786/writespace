@@ -5,9 +5,9 @@ export const welcomeTemplate = (data: IWelcomePayload) =>
   emailLayout(
     `
     <h2 style="color: #2d3748; margin-top: 0;">Welcome to the Community, ${data.username}! 🎉</h2>
-    <p>We are absolutely thrilled to have you here. Blogify is a platform built for sharing ideas that matter.</p>
-    
-    <p>Get started by setting up your profile or diving into stories from top authors.</p>
+        <p>Welcome to <strong>Writespace</strong>! 🚀</p>
+        <p>We're thrilled to have you join our community of writers and readers.</p>
+        <p>Start exploring, sharing your stories, and connecting with like-minded individuals.</p>
     
     <div style="text-align: center;">
         <a href="${data.ctaLink}" class="btn">Start Exploring</a>

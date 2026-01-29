@@ -1,4 +1,6 @@
 import app from "./app";
+import "./shared/queues/email.worker";
+import "./shared/queues/interaction.worker";
 
 const PORT = process.env.PORT;
 

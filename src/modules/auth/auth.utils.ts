@@ -37,7 +37,7 @@ export const configurePassport = () => {
         {
           clientID: env.GOOGLE_CLIENT_ID,
           clientSecret: env.GOOGLE_CLIENT_SECRET,
-          callbackURL: `${env.CLIENT_URL}/api/auth/google/callback`,
+          callbackURL: `${env.CLIENT_URL}/auth/google/callback`,
         },
         (accessToken, refreshToken, profile, done) => {
           // Pass profile to controller/service
@@ -54,7 +54,7 @@ export const configurePassport = () => {
         {
           clientID: env.GITHUB_CLIENT_ID,
           clientSecret: env.GITHUB_CLIENT_SECRET,
-          callbackURL: `${env.CLIENT_URL}/api/auth/github/callback`,
+          callbackURL: `${env.CLIENT_URL}/auth/github/callback`,
           scope: ["user:email"],
         },
         (

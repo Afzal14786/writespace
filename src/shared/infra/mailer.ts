@@ -19,8 +19,9 @@ class Mailer {
   constructor() {
     this.transporter = nodemailer.createTransport({
       host: env.SMTP_HOST,
-      port: env.SMTP_PORT, // 587 or 465
+      port: env.SMTP_PORT,
       secure: env.SMTP_PORT === 465, // true for 465, false for other ports
+      requireTLS: true,
       auth: {
         user: env.SMTP_USER,
         pass: env.SMTP_PASS,
@@ -35,7 +36,7 @@ class Mailer {
   public async sendEmail(options: MailOptions): Promise<void> {
     try {
       await this.transporter.sendMail({
-        from: `"${env.EMAIL_FROM}" <${env.SMTP_USER}>`, // Standard "Name <email>" format
+        from: `WriteSpace <${env.SMTP_USER}>`,
         to: options.to,
         subject: options.subject,
         html: options.html,
