@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import env from "./env";
+import logger from "./logger";
 
 const connectDB = () => {
   mongoose
@@ -7,10 +8,10 @@ const connectDB = () => {
       dbName: "writespace",
     })
     .then(() => {
-      console.log(`Database connected successfully`);
+      logger.info(`Database connected successfully`);
     })
     .catch((err) => {
-      console.log(`Something err while connecting database : ${err}`);
+      logger.error(`Something err while connecting database : ${err}`);
     });
 };
 

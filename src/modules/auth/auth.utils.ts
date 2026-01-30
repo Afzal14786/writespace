@@ -21,15 +21,6 @@ export const generateOTP = (length: number = 6): string => {
  * Note: Actual user finding/creation happens in the controller/service via the callback.
  */
 export const configurePassport = () => {
-  // Serialization
-  passport.serializeUser((user: any, done) => {
-    done(null, user);
-  });
-
-  passport.deserializeUser((user: any, done) => {
-    done(null, user);
-  });
-
   // Google Strategy
   if (env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET) {
     passport.use(
@@ -37,7 +28,7 @@ export const configurePassport = () => {
         {
           clientID: env.GOOGLE_CLIENT_ID,
           clientSecret: env.GOOGLE_CLIENT_SECRET,
-          callbackURL: `${env.CLIENT_URL}/auth/google/callback`,
+          callbackURL: `${env.SERVER_URL}/auth/google/callback`,
         },
         (accessToken, refreshToken, profile, done) => {
           // Pass profile to controller/service
@@ -54,7 +45,7 @@ export const configurePassport = () => {
         {
           clientID: env.GITHUB_CLIENT_ID,
           clientSecret: env.GITHUB_CLIENT_SECRET,
-          callbackURL: `${env.CLIENT_URL}/auth/github/callback`,
+          callbackURL: `${env.SERVER_URL}/auth/github/callback`,
           scope: ["user:email"],
         },
         (

@@ -9,9 +9,10 @@ import { RegisterInput } from "./dtos/register.dto";
 import { LoginInput } from "./dtos/login.dto";
 import { generateOTP } from "./auth.utils";
 import { IOAuthProfile } from "./interface/auth.interface";
+import logger from "../../config/logger";
 
 // Token Expiry Config
-const ACCESS_TOKEN_EXPIRE = "15m";
+const ACCESS_TOKEN_EXPIRE = env.JWT_ACCESS_EXPIRE;
 const REFRESH_TOKEN_EXPIRE = "7d";
 const REFRESH_TOKEN_EXPIRE_SEC = 7 * 24 * 60 * 60; // 7 Days in seconds
 const OTP_EXPIRE_SEC = 60; // 1 Minute
@@ -103,6 +104,8 @@ class AuthService {
     return { user: user.getPublicProfile(), ...tokens };
   }
 
+
+
   /**
    * Authenticates a user and issues tokens.
    */
@@ -126,6 +129,8 @@ class AuthService {
       ip,
       user.id,
     );
+    
+    logger.info("User logged in successfully", { userId: user.id });
 
     return { user: user.getPublicProfile(), ...tokens };
   }
@@ -206,7 +211,7 @@ class AuthService {
       { id: decoded.id, role: decoded.role },
       env.JWT_SECRET,
       {
-        expiresIn: ACCESS_TOKEN_EXPIRE,
+        expiresIn: ACCESS_TOKEN_EXPIRE as any,
       },
     );
 
@@ -226,7 +231,7 @@ class AuthService {
 
   private async signTokens(userId: string) {
     const accessToken = jwt.sign({ id: userId, role: "user" }, env.JWT_SECRET, {
-      expiresIn: ACCESS_TOKEN_EXPIRE,
+      expiresIn: ACCESS_TOKEN_EXPIRE as any,
     });
 
     const refreshToken = jwt.sign(

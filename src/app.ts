@@ -8,7 +8,7 @@ import { postsRoutes } from "./modules/posts/posts.routes";
 import { authRoutes } from "./modules/auth/auth.routes";
 import { userRoutes } from "./modules/users/user.routes";
 import { interactionsRoutes } from "./modules/interactions/interactions.routes";
-import morgan from "morgan";
+import httpLogger from "./shared/middlewares/httpLogger";
 import helmet from "helmet";
 import cors from "cors";
 import { errorHandler } from "./shared/middlewares/error.middleware";
@@ -21,12 +21,15 @@ dotenv.config();
 
 const app = express();
 
+// Trust Proxy (for Load Balancers/Nginx)
+app.set("trust proxy", 1);
+
 // =========== Security & Parsing ===========
 app.use(helmet());
 app.use(cors({ origin: env.CLIENT_URL, credentials: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use(morgan("dev"));
+app.use(httpLogger);
 
 // =========== Auth Config ===========
 configurePassport();

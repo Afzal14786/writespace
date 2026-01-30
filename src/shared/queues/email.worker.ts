@@ -2,6 +2,7 @@ import { Worker } from "bullmq";
 import { mailer } from "../infra/mailer";
 import env from "../../config/env";
 import { IEmailJob } from "../../modules/notification/interface/notification.interface";
+import logger from "../../config/logger";
 
 // 1. Create the Worker instance
 export const emailWorker = new Worker<IEmailJob>(
@@ -12,11 +13,11 @@ export const emailWorker = new Worker<IEmailJob>(
     const jobAge = now - job.timestamp;
     
     if (job.data.subject.includes("OTP") && jobAge > 60000) {
-      console.warn(`Skipping stale OTP email job ${job.id} (Age: ${Math.round(jobAge/1000)}s)`);
+      logger.warn(`Skipping stale OTP email job ${job.id} (Age: ${Math.round(jobAge/1000)}s)`);
       return;
     }
 
-    console.log(`Processing email job ${job.id} for ${job.data.to}`);
+    logger.info(`Processing email job ${job.id} for ${job.data.to}`);
 
     await mailer.sendEmail({
       to: job.data.to,
@@ -34,9 +35,9 @@ export const emailWorker = new Worker<IEmailJob>(
 );
 
 emailWorker.on("completed", (job) => {
-  console.log(`Email job ${job.id} completed successfully`);
+  logger.info(`Email job ${job.id} completed successfully`);
 });
 
 emailWorker.on("failed", (job, err) => {
-  console.error(`Email job ${job?.id} failed with error: ${err.message}`);
+  logger.error(`Email job ${job?.id} failed with error: ${err.message}`);
 });

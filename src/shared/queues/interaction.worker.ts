@@ -2,6 +2,7 @@ import { Worker } from "bullmq";
 import env from "../../config/env";
 import { NotificationModel } from "../../modules/notification/notification.model";
 import { IInteractionJob } from "./interaction.queue";
+import logger from "../../config/logger";
 
 // 1. Create the Worker instance
 export const interactionWorker = new Worker<IInteractionJob>(
@@ -32,9 +33,9 @@ export const interactionWorker = new Worker<IInteractionJob>(
 );
 
 interactionWorker.on("completed", (job) => {
-  // console.debug(`Interaction job ${job.id} completed`);
+  // logger.debug(`Interaction job ${job.id} completed`);
 });
 
 interactionWorker.on("failed", (job, err) => {
-  console.error(`Interaction job ${job?.id} failed: ${err.message}`);
+  logger.error(`Interaction job ${job?.id} failed: ${err.message}`);
 });

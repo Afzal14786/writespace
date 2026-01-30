@@ -1,5 +1,6 @@
 import { createClient, RedisClientType } from "redis";
 import env from "./env";
+import logger from "./logger";
 
 export const client: RedisClientType = createClient({
   url: env.REDIS_URL,
@@ -7,7 +8,7 @@ export const client: RedisClientType = createClient({
 });
 
 client.on("error", (err: Error) => {
-  console.error(`Redis Client Error:`, err);
+  logger.error(`Redis Client Error:`, err);
 });
 
 /**
@@ -15,15 +16,15 @@ client.on("error", (err: Error) => {
  */
 
 client.on("connect", () => {
-  console.log(`Redis connection process initiated`);
+  logger.info(`Redis connection process initiated`);
 });
 
 client.on("ready", () => {
-  console.log(`Redis ready and connected successfully`);
+  logger.info(`Redis ready and connected successfully`);
 });
 
 client.on("reconnecting", () => {
-  console.log(`Redis reconnecting...`);
+  logger.info(`Redis reconnecting...`);
 });
 
 /**

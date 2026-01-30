@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import { AppError } from "../utils/app.error";
 import { HTTP_STATUS } from "../constants/http-codes";
 import { ZodError } from "zod"; // Assuming Zod is used
+import logger from "../../config/logger";
 
 export const errorHandler = (
   err: any,
@@ -16,7 +17,7 @@ export const errorHandler = (
   let statusCode = err.statusCode || HTTP_STATUS.INTERNAL_SERVER_ERROR;
 
   // Log error for debugging
-  console.error(err);
+  logger.error(message, { stack: err.stack });
 
   // Mongoose Bad ObjectId
   if (err.name === "CastError") {

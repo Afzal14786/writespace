@@ -12,7 +12,9 @@ const envSchema = z.object({
   REDIS_URL: z.string().default("redis://localhost:6379"),
   REDIS_PASSWORD: z.string().optional(),
   JWT_SECRET: z.string().min(1, "JWT_SECRET is required"),
+  JWT_ACCESS_EXPIRE: z.string().default("15m"),
   CLIENT_URL: z.string().default("http://localhost:3000"),
+  SERVER_URL: z.string().default("http://localhost:8000/api/v1"),
 
   // AWS S3 Configuration
   AWS_REGION: z.string().min(1, "AWS_REGION is required"),
