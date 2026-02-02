@@ -1,9 +1,14 @@
 import { Request, Response, NextFunction } from "express";
 import { authService } from "./auth.service";
+import { ApiResponse } from "../../shared/utils/api-response";
 import { HTTP_STATUS } from "../../shared/constants/http-codes";
 import { RegisterInput } from "./dtos/register.dto";
 import { LoginInput } from "./dtos/login.dto";
 import { VerifyOtpInput } from "./dtos/verify-otp.dto";
+import {
+  ForgotPasswordInput,
+  ResetPasswordInput,
+} from "./dtos/password-reset.dto";
 import env from "../../config/env";
 
 // Cookie Config (HttpOnly)
@@ -23,7 +28,7 @@ export class AuthController {
   ) {
     try {
       const result = await authService.initiateRegistration(req.body);
-      res.status(HTTP_STATUS.OK).json(result);
+      new ApiResponse(res, HTTP_STATUS.OK, result.message, null).send();
     } catch (error) {
       next(error);
     }
@@ -40,14 +45,12 @@ export class AuthController {
       const { user, accessToken, refreshToken } =
         await authService.verifyRegistration(email, otp);
 
-      // Set Refresh Token in Cookie
       res.cookie("refreshToken", refreshToken, REFRESH_COOKIE_OPTIONS);
 
-      res.status(HTTP_STATUS.CREATED).json({
-        message: "Registration successful",
+      new ApiResponse(res, HTTP_STATUS.CREATED, "Registration successful", {
         user,
         accessToken,
-      });
+      }).send();
     } catch (error) {
       next(error);
     }
@@ -70,11 +73,10 @@ export class AuthController {
 
       res.cookie("refreshToken", refreshToken, REFRESH_COOKIE_OPTIONS);
 
-      res.status(HTTP_STATUS.OK).json({
-        message: "Login successful",
+      new ApiResponse(res, HTTP_STATUS.OK, "Login successful", {
         user,
         accessToken,
-      });
+      }).send();
     } catch (error) {
       next(error);
     }
@@ -85,14 +87,20 @@ export class AuthController {
     try {
       const refreshToken = req.cookies.refreshToken;
       if (!refreshToken) {
-        res
-          .status(HTTP_STATUS.UNAUTHORIZED)
-          .json({ message: "Refresh Token required" });
+        new ApiResponse(
+          res,
+          HTTP_STATUS.UNAUTHORIZED,
+          "Refresh Token required",
+          null,
+        ).send();
         return;
       }
 
-      const { accessToken } = await authService.refreshToken(refreshToken);
-      res.status(HTTP_STATUS.OK).json({ accessToken });
+      const tokens = await authService.refreshToken(refreshToken);
+      res.cookie("refreshToken", tokens.refreshToken, REFRESH_COOKIE_OPTIONS);
+      new ApiResponse(res, HTTP_STATUS.OK, "Token refreshed", {
+        accessToken: tokens.accessToken,
+      }).send();
     } catch (error) {
       next(error);
     }
@@ -110,7 +118,39 @@ export class AuthController {
       }
 
       res.clearCookie("refreshToken");
-      res.status(HTTP_STATUS.OK).json({ message: "Logged out successfully" });
+      new ApiResponse(
+        res,
+        HTTP_STATUS.OK,
+        "Logged out successfully",
+        null,
+      ).send();
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public async forgotPassword(
+    req: Request<{}, {}, ForgotPasswordInput>,
+    res: Response,
+    next: NextFunction,
+  ) {
+    try {
+      const result = await authService.forgotPassword(req.body.email);
+      new ApiResponse(res, HTTP_STATUS.OK, result.message, null).send();
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public async resetPassword(
+    req: Request<{}, {}, ResetPasswordInput>,
+    res: Response,
+    next: NextFunction,
+  ) {
+    try {
+      const { token, password } = req.body;
+      const result = await authService.resetPassword(token, password);
+      new ApiResponse(res, HTTP_STATUS.OK, result.message, null).send();
     } catch (error) {
       next(error);
     }

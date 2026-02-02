@@ -1,5 +1,8 @@
 import jwt from "jsonwebtoken";
-import { User } from "../users/user.model";
+import bcrypt from "bcryptjs";
+import { eq, or } from "drizzle-orm";
+import { db } from "../../db";
+import { users } from "../../db/schema";
 import { client as redis } from "../../config/redis";
 import env from "../../config/env";
 import { AppError } from "../../shared/utils/app.error";
@@ -8,28 +11,29 @@ import { notificationService } from "../notification/notification.service";
 import { RegisterInput } from "./dtos/register.dto";
 import { LoginInput } from "./dtos/login.dto";
 import { generateOTP } from "./auth.utils";
-import { IOAuthProfile } from "./interface/auth.interface";
+import { IJwtPayload, IOAuthProfile } from "./interface/auth.interface";
 import logger from "../../config/logger";
+import { PublicUser } from "../users/interface/user.interface";
 
-// Token Expiry Config
 const ACCESS_TOKEN_EXPIRE = env.JWT_ACCESS_EXPIRE;
 const REFRESH_TOKEN_EXPIRE = "7d";
-const REFRESH_TOKEN_EXPIRE_SEC = 7 * 24 * 60 * 60; // 7 Days in seconds
-const OTP_EXPIRE_SEC = 60; // 1 Minute
+const REFRESH_TOKEN_EXPIRE_SEC = 7 * 24 * 60 * 60;
+const OTP_EXPIRE_SEC = 60;
+const RESET_TOKEN_EXPIRE_SEC = 60 * 60;
+const SALT_ROUNDS = 12;
+
+function toPublicUser(user: typeof users.$inferSelect): PublicUser {
+  const { passwordHash, loginAttempts, lockUntil, ...publicFields } = user;
+  return publicFields;
+}
 
 class AuthService {
-  /**
-   * Step 1: Initiate Registration
-   * Validates input, generates OTP, stores in Redis, sends Email.
-   */
   public async initiateRegistration(data: RegisterInput) {
-    // 1. Check if user exists
-    const existingUser = await User.findOne({
-      $or: [
-        { "personal_info.email": data.email },
-        { "personal_info.username": data.username },
-      ],
-    });
+    const [existingUser] = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(or(eq(users.email, data.email), eq(users.username, data.username)))
+      .limit(1);
 
     if (existingUser) {
       throw new AppError(
@@ -38,22 +42,15 @@ class AuthService {
       );
     }
 
-    // 2. Generate OTP
     const otp = generateOTP(6);
 
-    // 3. Cache Registration Data (TTL 10 mins)
-    // We store the hashed password (pre-save hook won't run on raw object, so we depend on Model creation later)
-    // Actually, it's safer to store raw data and let the model handle hashing upon creation
     const registrationData = { ...data, otp };
     await redis.set(
       `auth:register:${data.email}`,
       JSON.stringify(registrationData),
-      {
-        EX: OTP_EXPIRE_SEC,
-      },
+      { EX: OTP_EXPIRE_SEC },
     );
 
-    // 4. Send OTP Email
     await notificationService.sendOtpEmail(data.email, otp);
 
     return {
@@ -61,11 +58,7 @@ class AuthService {
     };
   }
 
-  /**
-   * Step 2: Verify OTP & Create User
-   */
   public async verifyRegistration(email: string, otp: string) {
-    // 1. Retrieve Cached Data
     const cachedData = await redis.get(`auth:register:${email}`);
     if (!cachedData) {
       throw new AppError(HTTP_STATUS.BAD_REQUEST, "OTP expired or invalid");
@@ -73,173 +66,232 @@ class AuthService {
 
     const data = JSON.parse(cachedData);
 
-    // 2. Verify OTP Match
     if (data.otp !== otp) {
       throw new AppError(HTTP_STATUS.BAD_REQUEST, "Invalid OTP");
     }
 
-    // 3. Create User (Model hook will hash password)
-    const user = await User.create({
-      personal_info: {
+    const passwordHash = await bcrypt.hash(data.password, SALT_ROUNDS);
+
+    const [user] = await db
+      .insert(users)
+      .values({
         fullname: data.fullname,
         email: data.email,
         username: data.username,
-        password: data.password,
-      },
-    });
+        passwordHash,
+      })
+      .returning();
 
-    // 4. Clear Cache
     await redis.del(`auth:register:${email}`);
 
-    // 5. Generate Tokens
-    const tokens = await this.signTokens(user.id);
+    const tokens = await this.signTokens(user.id, user.role);
 
-    // 6. Send Welcome Email
     await notificationService.sendWelcomeEmail(
-      user.personal_info.email,
-      user.personal_info.username,
+      user.email,
+      user.username,
       user.id,
     );
 
-    return { user: user.getPublicProfile(), ...tokens };
+    return { user: toPublicUser(user), ...tokens };
   }
 
-
-
-  /**
-   * Authenticates a user and issues tokens.
-   */
   public async login(data: LoginInput, ip: string) {
-    // 1. Find User
-    const user = await User.findOne({
-      "personal_info.email": data.email,
-    }).select("+personal_info.password");
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(eq(users.email, data.email))
+      .limit(1);
 
-    if (!user || !(await user.comparePassword(data.password))) {
+    if (!user || !user.passwordHash) {
       throw new AppError(HTTP_STATUS.UNAUTHORIZED, "Invalid email or password");
     }
 
-    // 2. Generate Tokens
-    const tokens = await this.signTokens(user.id);
+    const passwordMatch = await bcrypt.compare(
+      data.password,
+      user.passwordHash,
+    );
+    if (!passwordMatch) {
+      throw new AppError(HTTP_STATUS.UNAUTHORIZED, "Invalid email or password");
+    }
 
-    // 3. Send Security Alert
+    const tokens = await this.signTokens(user.id, user.role);
+
     await notificationService.sendLoginAlert(
-      user.personal_info.email,
-      user.personal_info.username,
+      user.email,
+      user.username,
       ip,
       user.id,
     );
-    
+
     logger.info("User logged in successfully", { userId: user.id });
 
-    return { user: user.getPublicProfile(), ...tokens };
+    return { user: toPublicUser(user), ...tokens };
   }
 
-  /**
-   * Handles OAuth Login/Register (Google/GitHub).
-   */
   public async googleAuth(profile: IOAuthProfile) {
-    return this.handleSocialAuth(profile, "google_auth");
+    return this.handleSocialAuth(profile, "googleAuth");
   }
 
   public async githubAuth(profile: IOAuthProfile) {
-    return this.handleSocialAuth(profile, "github_auth");
+    return this.handleSocialAuth(profile, "githubAuth");
   }
 
   private async handleSocialAuth(
     profile: IOAuthProfile,
-    providerField: "google_auth" | "github_auth",
+    providerField: "googleAuth" | "githubAuth",
   ) {
-    // 1. Check if user exists by email
-    let user = await User.findOne({ "personal_info.email": profile.email });
+    const [existingUser] = await db
+      .select()
+      .from(users)
+      .where(eq(users.email, profile.email))
+      .limit(1);
 
-    if (user) {
-      // Link account if not linked
-      if (!user[providerField]) {
-        user[providerField] = true;
-        await user.save();
+    if (existingUser) {
+      if (!existingUser[providerField]) {
+        await db
+          .update(users)
+          .set({ [providerField]: true })
+          .where(eq(users.id, existingUser.id));
       }
-    } else {
-      // Create new user with random password
-      const username =
-        profile.displayName.toLowerCase().replace(/\s+/g, "") + generateOTP(4);
-      const randomPassword = generateOTP(16) + "Aa1!"; // Strong random password
-
-      user = await User.create({
-        personal_info: {
-          fullname: profile.displayName,
-          email: profile.email,
-          username,
-          password: randomPassword,
-          profile_image: { url: profile.picture || "" },
-        },
-        [providerField]: true,
-        account_info: { isVarified: true }, // Trust social provider
-      });
-
-      // 6. Send Welcome Email
-      await notificationService.sendWelcomeEmail(
-        user.personal_info.email,
-        user.personal_info.username,
-        user.id,
-      );
+      return this.signTokens(existingUser.id, existingUser.role);
     }
 
-    return this.signTokens(user.id);
+    const username =
+      profile.displayName.toLowerCase().replace(/\s+/g, "") + generateOTP(4);
+    const randomPassword = generateOTP(16) + "Aa1!";
+    const passwordHash = await bcrypt.hash(randomPassword, SALT_ROUNDS);
+
+    const [newUser] = await db
+      .insert(users)
+      .values({
+        fullname: profile.displayName,
+        email: profile.email,
+        username,
+        passwordHash,
+        profileImageUrl: profile.picture || undefined,
+        [providerField]: true,
+      })
+      .returning();
+
+    await notificationService.sendWelcomeEmail(
+      newUser.email,
+      newUser.username,
+      newUser.id,
+    );
+
+    return this.signTokens(newUser.id, newUser.role);
   }
 
-  /**
-   * Refreshes the Access Token using a valid Refresh Token.
-   */
-  public async refreshToken(refreshToken: string) {
-    let decoded: any;
+  public async refreshToken(oldRefreshToken: string) {
+    let decoded: IJwtPayload;
     try {
-      decoded = jwt.verify(refreshToken, env.JWT_SECRET);
-    } catch (err) {
+      decoded = jwt.verify(
+        oldRefreshToken,
+        env.JWT_REFRESH_SECRET,
+      ) as IJwtPayload;
+    } catch {
       throw new AppError(HTTP_STATUS.UNAUTHORIZED, "Invalid Refresh Token");
     }
 
     const storedToken = await redis.get(`refresh_token:${decoded.id}`);
-    if (!storedToken || storedToken !== refreshToken) {
+    if (!storedToken || storedToken !== oldRefreshToken) {
+      await redis.del(`refresh_token:${decoded.id}`);
       throw new AppError(
         HTTP_STATUS.UNAUTHORIZED,
         "Session expired or invalid",
       );
     }
 
-    const accessToken = jwt.sign(
-      { id: decoded.id, role: decoded.role },
-      env.JWT_SECRET,
-      {
-        expiresIn: ACCESS_TOKEN_EXPIRE as any,
-      },
-    );
+    const [user] = await db
+      .select({ id: users.id, role: users.role })
+      .from(users)
+      .where(eq(users.id, decoded.id))
+      .limit(1);
 
-    return { accessToken };
+    if (!user) {
+      throw new AppError(HTTP_STATUS.UNAUTHORIZED, "User not found");
+    }
+
+    return this.signTokens(user.id, user.role);
   }
 
-  /**
-   * Logs out the user.
-   */
   public async logout(userId: string) {
     await redis.del(`refresh_token:${userId}`);
   }
 
-  // ==========================================
-  // HELPERS
-  // ==========================================
+  public async forgotPassword(email: string) {
+    const [user] = await db
+      .select({ id: users.id, username: users.username })
+      .from(users)
+      .where(eq(users.email, email))
+      .limit(1);
 
-  private async signTokens(userId: string) {
-    const accessToken = jwt.sign({ id: userId, role: "user" }, env.JWT_SECRET, {
-      expiresIn: ACCESS_TOKEN_EXPIRE as any,
+    if (!user) {
+      return { message: "If that email exists, a reset link has been sent." };
+    }
+
+    const resetToken = generateOTP(32);
+
+    await redis.set(`password_reset:${resetToken}`, user.id, {
+      EX: RESET_TOKEN_EXPIRE_SEC,
+    });
+
+    const resetUrl = `${env.CLIENT_URL}/auth/reset-password?token=${resetToken}`;
+    await notificationService.sendPasswordResetEmail(
+      email,
+      user.username,
+      resetUrl,
+    );
+
+    return { message: "If that email exists, a reset link has been sent." };
+  }
+
+  public async resetPassword(token: string, newPassword: string) {
+    const userId = await redis.get(`password_reset:${token}`);
+    if (!userId) {
+      throw new AppError(
+        HTTP_STATUS.BAD_REQUEST,
+        "Reset token expired or invalid",
+      );
+    }
+
+    const [user] = await db
+      .select({ id: users.id, email: users.email, username: users.username })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+
+    if (!user) {
+      throw new AppError(HTTP_STATUS.NOT_FOUND, "User not found");
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
+
+    await db.update(users).set({ passwordHash }).where(eq(users.id, userId));
+
+    await redis.del(`password_reset:${token}`);
+    await redis.del(`refresh_token:${userId}`);
+
+    await notificationService.sendPasswordUpdateEmail(
+      user.email,
+      user.username,
+    );
+
+    return { message: "Password reset successful. Please log in again." };
+  }
+
+  private async signTokens(userId: string, role: string) {
+    const accessExpiry = ACCESS_TOKEN_EXPIRE as jwt.SignOptions["expiresIn"];
+    const refreshExpiry = REFRESH_TOKEN_EXPIRE as jwt.SignOptions["expiresIn"];
+
+    const accessToken = jwt.sign({ id: userId, role }, env.JWT_ACCESS_SECRET, {
+      expiresIn: accessExpiry,
     });
 
     const refreshToken = jwt.sign(
-      { id: userId, role: "user" },
-      env.JWT_SECRET,
-      {
-        expiresIn: REFRESH_TOKEN_EXPIRE,
-      },
+      { id: userId, role },
+      env.JWT_REFRESH_SECRET,
+      { expiresIn: refreshExpiry },
     );
 
     await redis.set(`refresh_token:${userId}`, refreshToken, {
