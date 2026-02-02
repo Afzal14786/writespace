@@ -1,40 +1,32 @@
 import { Worker } from "bullmq";
 import env from "../../config/env";
-import { NotificationModel } from "../../modules/notification/notification.model";
+import { db } from "../../db";
+import { notifications } from "../../db/schema";
 import { IInteractionJob } from "./interaction.queue";
 import logger from "../../config/logger";
 
-// 1. Create the Worker instance
 export const interactionWorker = new Worker<IInteractionJob>(
   "interaction-queue",
   async (job) => {
     const { recipientId, type, message, relatedId } = job.data;
 
-    // Persist the notification to MongoDB
-    // This runs in the background, keeping the main request loop fast
-    await NotificationModel.create({
-      recipient: recipientId,
+    await db.insert(notifications).values({
+      recipientId,
       type,
       message,
       relatedId,
     });
-
-    // Future enhancement: Here you could also trigger a WebSocket event
-    // to push this notification to the user in real-time.
-    // socket.to(recipientId).emit('notification', job.data);
   },
   {
     connection: {
       url: env.REDIS_URL,
       password: env.REDIS_PASSWORD,
     },
-    concurrency: 10, // Higher concurrency for interactions as they are IO-bound and high volume
+    concurrency: 10,
   },
 );
 
-interactionWorker.on("completed", (job) => {
-  // logger.debug(`Interaction job ${job.id} completed`);
-});
+interactionWorker.on("completed", (_job) => {});
 
 interactionWorker.on("failed", (job, err) => {
   logger.error(`Interaction job ${job?.id} failed: ${err.message}`);

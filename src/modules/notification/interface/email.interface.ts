@@ -26,3 +26,9 @@ export interface IProfileUpdatePayload {
   username: string;
   profileLink: string;
 }
+
+export interface IEmailJob {
+  to: string;
+  subject: string;
+  html: string;
+}

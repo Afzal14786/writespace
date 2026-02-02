@@ -5,12 +5,10 @@ import { loginAlertTemplate } from "./templates/login-alert";
 import { passwordUpdateTemplate } from "./templates/password-update";
 import { profileUpdateTemplate } from "./templates/profile-update";
 import { otpVerifyTemplate } from "./templates/otp-verify";
-import { NotificationModel } from "./notification.model";
 import { NotificationType } from "./interface/notification.interface";
 import { addInteractionJob } from "../../shared/queues/interaction.queue";
 
 interface INotificationService {
-  // Email Only (Auth & Security)
   sendWelcomeEmail(to: string, username: string, userId: string): Promise<void>;
   sendPasswordResetEmail(
     to: string,
@@ -26,8 +24,6 @@ interface INotificationService {
   sendPasswordUpdateEmail(to: string, username: string): Promise<void>;
   sendProfileUpdateEmail(to: string, username: string): Promise<void>;
   sendOtpEmail(to: string, otp: string): Promise<void>;
-
-  // In-App Only (Social Interactions)
   sendLikeNotification(
     recipientId: string,
     actorId: string,
@@ -48,27 +44,21 @@ interface INotificationService {
 }
 
 class NotificationService implements INotificationService {
-  // ==========================================
-  // EMAIL ONLY CHANNELS (Security & Account)
-  // ==========================================
-
   public async sendWelcomeEmail(
     to: string,
     username: string,
     userId: string,
   ): Promise<void> {
-    // Welcome is special: It sends an email AND creates a "Welcome to the platform" system notification
     const html = welcomeTemplate({
       username,
       ctaLink: `${process.env.CLIENT_URL || "#"}/onboarding`,
     });
     await addEmailJob({
       to,
-      subject: "Welcome to Writespace! 🚀",
+      subject: "Welcome to Writespace!",
       html,
     });
 
-    // System notification (In-App)
     await this.createInAppNotification(
       userId,
       NotificationType.WELCOME,
@@ -95,7 +85,6 @@ class NotificationService implements INotificationService {
     ip: string,
     userId: string,
   ): Promise<void> {
-    // Email Only - High security importance
     const time = new Date().toLocaleString();
     const html = loginAlertTemplate({
       username,
@@ -105,7 +94,7 @@ class NotificationService implements INotificationService {
     });
     await addEmailJob({
       to,
-      subject: "New Login Detected ⚠️",
+      subject: "New Login Detected",
       html,
     });
   }
@@ -149,16 +138,12 @@ class NotificationService implements INotificationService {
     });
   }
 
-  // ==========================================
-  // IN-APP ONLY CHANNELS (Social Interactions)
-  // ==========================================
-
   public async sendLikeNotification(
     recipientId: string,
     actorId: string,
     postId: string,
   ): Promise<void> {
-    if (recipientId === actorId) return; // Don't notify self
+    if (recipientId === actorId) return;
     await this.createInAppNotification(
       recipientId,
       NotificationType.LIKE,
@@ -209,18 +194,12 @@ class NotificationService implements INotificationService {
     );
   }
 
-  // ==========================================
-  // HELPER
-  // ==========================================
-
   private async createInAppNotification(
     recipient: string,
     type: NotificationType,
     message: string,
     relatedId?: string,
   ): Promise<void> {
-    // Push to Interaction Queue for async processing
-    // This ensures creating a "Like" or "Comment" doesn't block the API response
     await addInteractionJob({
       recipientId: recipient,
       type,
