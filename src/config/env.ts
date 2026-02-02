@@ -8,10 +8,11 @@ const envSchema = z.object({
     .enum(["development", "production", "test"])
     .default("development"),
   PORT: z.string().default("3000"),
-  MONGO_URI: z.string().min(1, "MONGO_URI is required"),
+  DATABASE_URL: z.string().min(1, "DATABASE_URL is required"),
   REDIS_URL: z.string().default("redis://localhost:6379"),
   REDIS_PASSWORD: z.string().optional(),
-  JWT_SECRET: z.string().min(1, "JWT_SECRET is required"),
+  JWT_ACCESS_SECRET: z.string().min(1, "JWT_ACCESS_SECRET is required"),
+  JWT_REFRESH_SECRET: z.string().min(1, "JWT_REFRESH_SECRET is required"),
   JWT_ACCESS_EXPIRE: z.string().default("15m"),
   CLIENT_URL: z.string().default("http://localhost:3000"),
   SERVER_URL: z.string().default("http://localhost:8000/api/v1"),
@@ -23,7 +24,10 @@ const envSchema = z.object({
   AWS_BUCKET_NAME: z.string().min(1, "AWS_BUCKET_NAME is required"),
 
   // SMTP Configuration (Email)
-  SMTP_HOST: z.string().min(1, "SMTP_HOST is required").default("smtp.gmail.com"),
+  SMTP_HOST: z
+    .string()
+    .min(1, "SMTP_HOST is required")
+    .default("smtp.gmail.com"),
   SMTP_PORT: z.coerce.number().default(587),
   SMTP_USER: z.string().min(1, "SMTP_USER is required"),
   SMTP_PASS: z.string().min(1, "SMTP_PASS is required"),
