@@ -1,147 +1,198 @@
-import { CommentModel } from "./comments.model";
-import { ShareModel } from "./shares.model";
-import { PostModel } from "../posts/posts.model";
+import { eq, and, desc, sql, count, isNull } from "drizzle-orm";
+import { db } from "../../db";
+import { comments, shares, posts, users } from "../../db/schema";
+import { Comment } from "../../db/schema";
 import { AddCommentDto } from "./dtos/add-comment.dto";
 import { AppError } from "../../shared/utils/app.error";
 import { HTTP_STATUS } from "../../shared/constants/http-codes";
-import { IComment } from "./interface/comment.interface";
 import { addInteractionJob } from "../../shared/queues/interaction.queue";
 import { NotificationType } from "../../modules/notification/interface/notification.interface";
 
 class InteractionsService {
-  /**
-   * Add a comment to a post.
-   */
   public async createComment(
     userId: string,
     postId: string,
     data: AddCommentDto,
-  ): Promise<IComment> {
-    const post = await PostModel.findById(postId);
+  ) {
+    const [post] = await db
+      .select({ id: posts.id, authorId: posts.authorId })
+      .from(posts)
+      .where(eq(posts.id, postId))
+      .limit(1);
+
     if (!post) {
       throw new AppError(HTTP_STATUS.NOT_FOUND, "Post not found");
     }
 
-    const comment = await CommentModel.create({
-      content: data.content,
-      post: postId,
-      author: userId,
-      parentComment: data.parentCommentId || undefined,
-    });
+    let comment: Comment;
+    let parentCommentAuthor: string | null = null;
 
-    // Update post comment count
-    await PostModel.findByIdAndUpdate(postId, {
-      $inc: { "stats.commentCount": 1 },
-    });
+    await db.transaction(async (tx) => {
+      const [created] = await tx
+        .insert(comments)
+        .values({
+          content: data.content,
+          postId,
+          authorId: userId,
+          parentCommentId: data.parentCommentId || null,
+        })
+        .returning();
 
-    // If it's a reply, update parent's reply count
-    if (data.parentCommentId) {
-      const parentComment = await CommentModel.findByIdAndUpdate(
-        data.parentCommentId,
-        { $inc: { "stats.replyCount": 1 } },
-      );
+      comment = created;
 
-      // Notify parent comment author
-      if (parentComment && parentComment.author.toString() !== userId) {
-        await addInteractionJob({
-          type: NotificationType.COMMENT,
-          recipientId: parentComment.author.toString(),
-          actorId: userId,
-          relatedId: postId,
-          message: "replied to your comment",
-        });
+      await tx
+        .update(posts)
+        .set({ commentCount: sql`${posts.commentCount} + 1` })
+        .where(eq(posts.id, postId));
+
+      if (data.parentCommentId) {
+        const [parentComment] = await tx
+          .update(comments)
+          .set({ replyCount: sql`${comments.replyCount} + 1` })
+          .where(eq(comments.id, data.parentCommentId))
+          .returning({ authorId: comments.authorId });
+
+        if (parentComment && parentComment.authorId !== userId) {
+          parentCommentAuthor = parentComment.authorId;
+        }
       }
-    }
+    });
 
-    // Notify post author
-    if (post.author.toString() !== userId) {
+    if (parentCommentAuthor) {
       await addInteractionJob({
         type: NotificationType.COMMENT,
-        recipientId: post.author.toString(),
+        recipientId: parentCommentAuthor,
+        actorId: userId,
+        relatedId: postId,
+        message: "replied to your comment",
+      });
+    }
+
+    if (post.authorId !== userId) {
+      await addInteractionJob({
+        type: NotificationType.COMMENT,
+        recipientId: post.authorId,
         actorId: userId,
         relatedId: postId,
         message: "commented on your post",
       });
     }
 
-    return comment.populate(
-      "author",
-      "personal_info.username personal_info.profile_image",
-    );
+    const [commentWithAuthor] = await db
+      .select({
+        comment: comments,
+        authorUsername: users.username,
+        authorProfileImage: users.profileImageUrl,
+      })
+      .from(comments)
+      .leftJoin(users, eq(comments.authorId, users.id))
+      .where(eq(comments.id, comment!.id))
+      .limit(1);
+
+    return {
+      ...commentWithAuthor.comment,
+      author: {
+        username: commentWithAuthor.authorUsername,
+        profileImageUrl: commentWithAuthor.authorProfileImage,
+      },
+    };
   }
 
-  /**
-   * Get comments for a post.
-   * Supports pagination and getting replies for a specific parent if needed (logic can be expanded).
-   * For now, fetches top-level comments.
-   */
   public async getPostComments(
     postId: string,
     page: number = 1,
     limit: number = 20,
     parentId: string | null = null,
-  ): Promise<IComment[]> {
-    const skip = (page - 1) * limit;
-    const query: any = { post: postId, parentComment: parentId };
+  ) {
+    const offset = (page - 1) * limit;
 
-    return CommentModel.find(query)
-      .populate("author", "personal_info.username personal_info.profile_image")
-      .sort({ createdAt: -1 })
-      .skip(skip)
+    const conditions = parentId
+      ? and(eq(comments.postId, postId), eq(comments.parentCommentId, parentId))
+      : and(eq(comments.postId, postId), isNull(comments.parentCommentId));
+
+    const results = await db
+      .select({
+        comment: comments,
+        authorUsername: users.username,
+        authorProfileImage: users.profileImageUrl,
+      })
+      .from(comments)
+      .leftJoin(users, eq(comments.authorId, users.id))
+      .where(conditions)
+      .orderBy(desc(comments.createdAt))
+      .offset(offset)
       .limit(limit);
+
+    return results.map(
+      ({ comment: c, authorUsername, authorProfileImage }) => ({
+        ...c,
+        author: {
+          username: authorUsername,
+          profileImageUrl: authorProfileImage,
+        },
+      }),
+    );
   }
 
-  /**
-   * Delete a comment (Author or Admin).
-   */
   public async deleteComment(
     userId: string,
     commentId: string,
     isAdmin: boolean = false,
   ): Promise<void> {
-    const comment = await CommentModel.findById(commentId);
+    const [comment] = await db
+      .select()
+      .from(comments)
+      .where(eq(comments.id, commentId))
+      .limit(1);
+
     if (!comment) {
       throw new AppError(HTTP_STATUS.NOT_FOUND, "Comment not found");
     }
 
-    if (comment.author.toString() !== userId && !isAdmin) {
+    if (comment.authorId !== userId && !isAdmin) {
       throw new AppError(
         HTTP_STATUS.FORBIDDEN,
         "Not authorized to delete this comment",
       );
     }
 
-    await comment.deleteOne();
+    await db.transaction(async (tx) => {
+      const [replyCountResult] = await tx
+        .select({ total: count() })
+        .from(comments)
+        .where(eq(comments.parentCommentId, commentId));
 
-    // Update counts
-    await PostModel.findByIdAndUpdate(comment.post, {
-      $inc: { "stats.commentCount": -1 },
+      const replyCount = replyCountResult.total;
+
+      await tx.delete(comments).where(eq(comments.parentCommentId, commentId));
+
+      await tx.delete(comments).where(eq(comments.id, commentId));
+
+      const totalRemoved = 1 + replyCount;
+      await tx
+        .update(posts)
+        .set({ commentCount: sql`${posts.commentCount} - ${totalRemoved}` })
+        .where(eq(posts.id, comment.postId));
+
+      if (comment.parentCommentId) {
+        await tx
+          .update(comments)
+          .set({ replyCount: sql`${comments.replyCount} - 1` })
+          .where(eq(comments.id, comment.parentCommentId));
+      }
     });
-    if (comment.parentComment) {
-      await CommentModel.findByIdAndUpdate(comment.parentComment, {
-        $inc: { "stats.replyCount": -1 },
-      });
-    }
   }
 
-  /**
-   * Log a share action.
-   * Note: Actual sharing happens on client side usually, or via specific APIs.
-   * This logs that a share happened.
-   */
   public async logShare(
     userId: string,
     postId: string,
     platform: string,
   ): Promise<void> {
-    await ShareModel.create({
-      user: userId,
-      post: postId,
+    await db.insert(shares).values({
+      userId,
+      postId,
       platform,
     });
-    // We already increment shareCount in postService.sharePost.
-    // We can either move that logic here or keep it there.
-    // For now, let's assume postService handles the count increment, and this just logs the record.
   }
 }
 

@@ -1,8 +1,3 @@
-import { Document, Types } from "mongoose";
+import { Share } from "../../../db/schema";
 
-export interface IShare extends Document {
-  user: Types.ObjectId;
-  post: Types.ObjectId;
-  platform: string; // 'twitter', 'facebook', 'linkedin', 'generic'
-  createdAt: Date;
-}
+export type { Share };
