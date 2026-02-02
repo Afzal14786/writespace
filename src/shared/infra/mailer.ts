@@ -34,19 +34,12 @@ class Mailer {
    * @param options {MailOptions} - Object containing 'to', 'subject', and 'html' content.
    */
   public async sendEmail(options: MailOptions): Promise<void> {
-    try {
-      await this.transporter.sendMail({
-        from: `WriteSpace <${env.SMTP_USER}>`,
-        to: options.to,
-        subject: options.subject,
-        html: options.html,
-      });
-      console.log(`Email sent to: ${options.to}`);
-    } catch (error) {
-      console.error("Email send error:", error);
-      // In a production app, we might want to queue failed emails via BullMQ instead of throwing immediately
-      console.warn("Failed to send email. Check SMTP configuration.");
-    }
+    await this.transporter.sendMail({
+      from: `WriteSpace <${env.SMTP_USER}>`,
+      to: options.to,
+      subject: options.subject,
+      html: options.html,
+    });
   }
 }
 
