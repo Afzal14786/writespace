@@ -1,6 +1,6 @@
 import { Queue } from "bullmq";
 import env from "../../config/env";
-import { IEmailJob } from "../../modules/notification/interface/notification.interface";
+import { IEmailJob } from "../../modules/notification/interface/email.interface";
 
 // 1. Create the Queue instance
 // Note: connection options are passed from the shared redis config or directly here

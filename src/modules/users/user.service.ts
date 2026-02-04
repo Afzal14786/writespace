@@ -1,53 +1,107 @@
-import { User } from "./user.model";
-import { IUser } from "./interface/user.interface";
+import { eq } from "drizzle-orm";
+import { db } from "../../db";
+import { users, User } from "../../db/schema";
 import { AppError } from "../../shared/utils/app.error";
 import { HTTP_STATUS } from "../../shared/constants/http-codes";
+import { UpdateProfileDto } from "./dtos/update-profile.dto";
+import { PublicUser } from "./interface/user.interface";
 
-/**
- * @class UserService
- * @description Handles business logic for User operations.
- * Acts as the bridge between the Controller and the Database.
- */
+const ALLOWED_PERSONAL_FIELDS: Record<string, keyof typeof users.$inferSelect> =
+  {
+    fullname: "fullname",
+    bio: "bio",
+  };
+
+const ALLOWED_SOCIAL_FIELDS: Record<string, keyof typeof users.$inferSelect> = {
+  youtube: "youtube",
+  instagram: "instagram",
+  facebook: "facebook",
+  twitter: "twitter",
+  github: "github",
+  website: "website",
+  linkedin: "linkedin",
+};
+
+function toPublicUser(user: User): PublicUser {
+  const { passwordHash, loginAttempts, lockUntil, ...publicFields } = user;
+  return publicFields;
+}
 
 class UserService {
-  /**
-   * Retrieves a user's public profile by their username.
-   * * @param {string} username - The unique username to search for.
-   * @returns {Promise<Partial<IUser>>} The sanitized public profile.
-   * @throws {AppError} 404 if the user does not exist.
-   */
+  public async getUserProfile(username: string): Promise<PublicUser> {
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(eq(users.username, username))
+      .limit(1);
 
-  public async getUserProfile(username: string): Promise<Partial<IUser>> {
-    const user = await User.findOne({ "personal_info.username": username });
     if (!user) {
       throw new AppError(HTTP_STATUS.NOT_FOUND, "User not found");
     }
-    return user.getPublicProfile();
+
+    return toPublicUser(user);
   }
 
-  /**
-   * Updates a user's profile data.
-   * Uses MongoDB dot notation to perform partial updates without overwriting the entire document.
-   * * @param {string} userId - The ID of the user to update.
-   * @param {any} updateData - The partial data object (validated by DTO) containing fields to update.
-   * @returns {Promise<IUser>} The updated user document.
-   * @throws {AppError} 404 if the user ID is invalid or not found.
-   */
+  public async updateUser(
+    userId: string,
+    updateData: UpdateProfileDto,
+  ): Promise<PublicUser> {
+    const sanitized: Record<string, string> = {};
 
-  public async updateUser(userId: string, updateData: unknown): Promise<IUser> {
-    const user = await User.findByIdAndUpdate(
-      userId,
-      { $set: updateData as any },
-      {
-        new: true,
-        runValidators: true,
-      },
-    );
+    if (updateData.personal_info) {
+      for (const [field, column] of Object.entries(ALLOWED_PERSONAL_FIELDS)) {
+        const value = (updateData.personal_info as Record<string, string>)[
+          field
+        ];
+        if (value !== undefined) {
+          sanitized[column] = value;
+        }
+      }
+    }
+
+    if (updateData.social_links) {
+      for (const [field, column] of Object.entries(ALLOWED_SOCIAL_FIELDS)) {
+        const value = (updateData.social_links as Record<string, string>)[
+          field
+        ];
+        if (value !== undefined) {
+          sanitized[column] = value;
+        }
+      }
+    }
+
+    if (Object.keys(sanitized).length === 0) {
+      throw new AppError(HTTP_STATUS.BAD_REQUEST, "No valid fields to update");
+    }
+
+    const [user] = await db
+      .update(users)
+      .set(sanitized)
+      .where(eq(users.id, userId))
+      .returning();
 
     if (!user) {
       throw new AppError(HTTP_STATUS.NOT_FOUND, "User not found");
     }
-    return user as IUser;
+
+    return toPublicUser(user);
+  }
+
+  public async deleteUser(userId: string): Promise<void> {
+    const [user] = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+
+    if (!user) {
+      throw new AppError(HTTP_STATUS.NOT_FOUND, "User not found");
+    }
+
+    await db
+      .update(users)
+      .set({ status: "suspended" })
+      .where(eq(users.id, userId));
   }
 }
 

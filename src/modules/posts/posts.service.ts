@@ -1,174 +1,302 @@
-import { PostModel } from "./posts.model";
-import { LikeModel } from "../interactions/like.model";
-import { IPost, PostStatus } from "./interfaces/post.interface";
+import { eq, and, sql, desc, count, ne } from "drizzle-orm";
+import { db } from "../../db";
+import { posts, likes, users } from "../../db/schema";
+import { Post } from "../../db/schema";
+import { PostStatus } from "./interfaces/post.interface";
 import { CreatePostInput } from "./dtos/create-post.dto";
 import slugify from "slugify";
 import sanitizeHtml from "sanitize-html";
 import { AppError } from "../../shared/utils/app.error";
 import { HTTP_STATUS } from "../../shared/constants/http-codes";
 import env from "../../config/env";
+import { interactionsService } from "../interactions/interactions.service";
 import { addInteractionJob } from "../../shared/queues/interaction.queue";
 import { NotificationType } from "../../modules/notification/interface/notification.interface";
 
-/**
- * @class PostService
- * @description Handles complex business logic for Blog Posts.
- */
 class PostService {
-  /**
-   * Create a new post with sanitization and slug generation
-   */
   public async createPost(
     authorId: string,
     data: CreatePostInput,
-  ): Promise<IPost> {
-    // 1. Sanitization: Strip malicious scripts
+  ): Promise<Post> {
     const cleanContent = this.sanitizeContent(data.content);
-
-    // 2. Slug Generation: Ensure uniqueness
     const slug = await this.generateUniqueSlug(data.title);
-
-    // 3. Excerpt Extraction
     const excerpt = data.subtitle || cleanContent.substring(0, 150) + "...";
-
-    // 4. Read Time Calculation
     const readTime = this.calculateReadTime(cleanContent);
 
-    const newPost = new PostModel({
-      ...data,
-      content: cleanContent,
-      slug,
-      excerpt,
-      author: authorId,
-      readTime,
-      status: data.isPublished ? PostStatus.PUBLISHED : PostStatus.DRAFT,
-      publishDate: data.isPublished ? new Date() : undefined,
+    let newPost: Post;
+
+    await db.transaction(async (tx) => {
+      const [created] = await tx
+        .insert(posts)
+        .values({
+          title: data.title,
+          slug,
+          subtitle: data.subtitle,
+          content: cleanContent,
+          excerpt,
+          authorId,
+          readTime,
+          tags: data.tags || [],
+          coverImageUrl: data.coverImage?.url,
+          coverImageAltText: data.coverImage?.altText,
+          coverImageCredit: data.coverImage?.credit,
+          status: data.isPublished ? PostStatus.PUBLISHED : PostStatus.DRAFT,
+          publishDate: data.isPublished ? new Date() : undefined,
+        })
+        .returning();
+
+      newPost = created;
+
+      await tx
+        .update(users)
+        .set({ totalPosts: sql`${users.totalPosts} + 1` })
+        .where(eq(users.id, authorId));
     });
 
-    return newPost.save();
+    return newPost!;
   }
 
-  /**
-   * Updates an existing post with ownership check.
-   */
-  public async updatePost(
-    postId: string,
-    userId: string,
-    data: Partial<CreatePostInput>,
-  ): Promise<IPost> {
-    const post = await PostModel.findById(postId);
+  public async getPost(postId: string, requesterId?: string) {
+    const [post] = await db
+      .select({
+        post: posts,
+        authorUsername: users.username,
+        authorProfileImage: users.profileImageUrl,
+      })
+      .from(posts)
+      .leftJoin(users, eq(posts.authorId, users.id))
+      .where(eq(posts.id, postId))
+      .limit(1);
 
     if (!post) {
       throw new AppError(HTTP_STATUS.NOT_FOUND, "Post not found");
     }
 
-    if (post.author.toString() !== userId) {
+    const isOwner = requesterId === post.post.authorId;
+    if (!isOwner && post.post.status !== "published") {
+      throw new AppError(HTTP_STATUS.NOT_FOUND, "Post not found");
+    }
+
+    return {
+      ...post.post,
+      author: {
+        username: post.authorUsername,
+        profileImageUrl: post.authorProfileImage,
+      },
+    };
+  }
+
+  public async getPosts(page: number, limit: number) {
+    const offset = (page - 1) * limit;
+
+    const [postsResult, [totalResult]] = await Promise.all([
+      db
+        .select({
+          id: posts.id,
+          title: posts.title,
+          slug: posts.slug,
+          subtitle: posts.subtitle,
+          excerpt: posts.excerpt,
+          coverImageUrl: posts.coverImageUrl,
+          coverImageAltText: posts.coverImageAltText,
+          tags: posts.tags,
+          authorId: posts.authorId,
+          status: posts.status,
+          publishDate: posts.publishDate,
+          viewCount: posts.viewCount,
+          likeCount: posts.likeCount,
+          commentCount: posts.commentCount,
+          shareCount: posts.shareCount,
+          readTime: posts.readTime,
+          createdAt: posts.createdAt,
+          authorUsername: users.username,
+          authorProfileImage: users.profileImageUrl,
+        })
+        .from(posts)
+        .leftJoin(users, eq(posts.authorId, users.id))
+        .where(eq(posts.status, "published"))
+        .orderBy(desc(posts.publishDate))
+        .offset(offset)
+        .limit(limit),
+      db
+        .select({ total: count() })
+        .from(posts)
+        .where(eq(posts.status, "published")),
+    ]);
+
+    const formattedPosts = postsResult.map(
+      ({ authorUsername, authorProfileImage, ...post }) => ({
+        ...post,
+        author: {
+          username: authorUsername,
+          profileImageUrl: authorProfileImage,
+        },
+      }),
+    );
+
+    return {
+      posts: formattedPosts,
+      total: totalResult.total,
+    };
+  }
+
+  public async updatePost(
+    postId: string,
+    userId: string,
+    data: Partial<CreatePostInput>,
+  ): Promise<Post> {
+    const [post] = await db
+      .select()
+      .from(posts)
+      .where(eq(posts.id, postId))
+      .limit(1);
+
+    if (!post) {
+      throw new AppError(HTTP_STATUS.NOT_FOUND, "Post not found");
+    }
+
+    if (post.authorId !== userId) {
       throw new AppError(
         HTTP_STATUS.FORBIDDEN,
         "You are not authorized to edit this post",
       );
     }
 
-    // If title changes, re-generate slug
+    const updates: Record<string, any> = {};
+
     if (data.title && data.title !== post.title) {
-      post.slug = await this.generateUniqueSlug(data.title);
+      updates.title = data.title;
+      updates.slug = await this.generateUniqueSlug(data.title);
     }
 
     if (data.content) {
-      post.content = this.sanitizeContent(data.content);
-      post.readTime = this.calculateReadTime(post.content);
+      updates.content = this.sanitizeContent(data.content);
+      updates.readTime = this.calculateReadTime(updates.content);
     }
 
-    Object.assign(post, data);
+    if (data.subtitle !== undefined) updates.subtitle = data.subtitle;
+    if (data.tags !== undefined) updates.tags = data.tags;
 
-    // Handle explicit status change logic if needed
     if (data.isPublished !== undefined) {
-      post.status = data.isPublished ? PostStatus.PUBLISHED : PostStatus.DRAFT;
+      updates.status = data.isPublished
+        ? PostStatus.PUBLISHED
+        : PostStatus.DRAFT;
       if (data.isPublished && !post.publishDate) {
-        post.publishDate = new Date();
+        updates.publishDate = new Date();
       }
     }
 
-    return post.save();
+    if (data.coverImage) {
+      updates.coverImageUrl = data.coverImage.url;
+      updates.coverImageAltText = data.coverImage.altText;
+      updates.coverImageCredit = data.coverImage.credit;
+    }
+
+    const [updatedPost] = await db
+      .update(posts)
+      .set(updates)
+      .where(eq(posts.id, postId))
+      .returning();
+
+    return updatedPost;
   }
 
-  /**
-   * Soft deletes a post (moves to TRASH) if user owns it.
-   */
   public async deletePost(
     postId: string,
     userId: string,
     isAdmin: boolean = false,
   ): Promise<void> {
-    const post = await PostModel.findById(postId);
+    const [post] = await db
+      .select({ id: posts.id, authorId: posts.authorId })
+      .from(posts)
+      .where(eq(posts.id, postId))
+      .limit(1);
 
     if (!post) {
       throw new AppError(HTTP_STATUS.NOT_FOUND, "Post not found");
     }
 
-    if (post.author.toString() !== userId && !isAdmin) {
+    if (post.authorId !== userId && !isAdmin) {
       throw new AppError(
         HTTP_STATUS.FORBIDDEN,
         "You are not authorized to delete this post",
       );
     }
 
-    post.status = PostStatus.TRASH;
-    await post.save();
+    await db.transaction(async (tx) => {
+      await tx
+        .update(posts)
+        .set({ status: "trash" })
+        .where(eq(posts.id, postId));
+
+      await tx
+        .update(users)
+        .set({ totalPosts: sql`GREATEST(${users.totalPosts} - 1, 0)` })
+        .where(eq(users.id, post.authorId));
+    });
   }
 
-  /**
-   * Toggles like status for a post.
-   */
   public async likePost(
     postId: string,
     userId: string,
   ): Promise<{ status: "liked" | "unliked" }> {
-    const existingLike = await LikeModel.findOne({
-      post: postId,
-      user: userId,
+    let resultStatus: "liked" | "unliked";
+    let postAuthorId: string | null = null;
+
+    await db.transaction(async (tx) => {
+      const [existingLike] = await tx
+        .select()
+        .from(likes)
+        .where(and(eq(likes.postId, postId), eq(likes.userId, userId)))
+        .limit(1);
+
+      if (existingLike) {
+        await tx
+          .delete(likes)
+          .where(and(eq(likes.postId, postId), eq(likes.userId, userId)));
+        await tx
+          .update(posts)
+          .set({ likeCount: sql`${posts.likeCount} - 1` })
+          .where(eq(posts.id, postId));
+        resultStatus = "unliked";
+      } else {
+        await tx.insert(likes).values({ postId, userId });
+        const [post] = await tx
+          .update(posts)
+          .set({ likeCount: sql`${posts.likeCount} + 1` })
+          .where(eq(posts.id, postId))
+          .returning({ authorId: posts.authorId });
+        resultStatus = "liked";
+
+        if (post && post.authorId !== userId) {
+          postAuthorId = post.authorId;
+        }
+      }
     });
 
-    if (existingLike) {
-      // Unlike
-      await existingLike.deleteOne();
-      await PostModel.findByIdAndUpdate(postId, {
-        $inc: { "stats.likeCount": -1 },
+    if (postAuthorId) {
+      await addInteractionJob({
+        type: NotificationType.LIKE,
+        recipientId: postAuthorId,
+        actorId: userId,
+        relatedId: postId,
+        message: "liked your post",
       });
-      return { status: "unliked" };
-    } else {
-      // Like
-      await LikeModel.create({ post: postId, user: userId });
-      const post = await PostModel.findByIdAndUpdate(postId, {
-        $inc: { "stats.likeCount": 1 },
-      });
-
-      if (post && post.author.toString() !== userId) {
-        await addInteractionJob({
-          type: NotificationType.LIKE,
-          recipientId: post.author.toString(),
-          actorId: userId,
-          relatedId: postId,
-          message: "liked your post",
-        });
-      }
-
-      return { status: "liked" };
     }
+
+    return { status: resultStatus! };
   }
 
-  /**
-   * Generates a shareable link and increments share count.
-   */
   public async sharePost(
     postId: string,
+    userId: string,
     platform: string,
   ): Promise<{ url: string; platform: string }> {
-    const post = await PostModel.findByIdAndUpdate(
-      postId,
-      { $inc: { "stats.shareCount": 1 } },
-      { new: true },
-    );
+    const [post] = await db
+      .update(posts)
+      .set({ shareCount: sql`${posts.shareCount} + 1` })
+      .where(eq(posts.id, postId))
+      .returning({ slug: posts.slug, title: posts.title });
 
     if (!post) {
       throw new AppError(HTTP_STATUS.NOT_FOUND, "Post not found");
@@ -192,10 +320,10 @@ class PostService {
         shareUrl = postUrl;
     }
 
+    await interactionsService.logShare(userId, postId, platform);
+
     return { url: shareUrl, platform };
   }
-
-  // --- Private Helpers ---
 
   private sanitizeContent(content: string): string {
     return sanitizeHtml(content, {
@@ -207,12 +335,25 @@ class PostService {
     });
   }
 
-  private async generateUniqueSlug(title: string): Promise<string> {
-    let slug = slugify(title, { lower: true, strict: true });
-    const existingSlug = await PostModel.findOne({ slug });
-    if (existingSlug) {
-      slug = `${slug}-${Date.now()}`;
+  private async generateUniqueSlug(
+    title: string,
+    maxRetries = 5,
+  ): Promise<string> {
+    const base = slugify(title, { lower: true, strict: true });
+    let slug = base;
+
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      const [existing] = await db
+        .select({ id: posts.id })
+        .from(posts)
+        .where(eq(posts.slug, slug))
+        .limit(1);
+
+      if (!existing) return slug;
+
+      slug = `${base}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     }
+
     return slug;
   }
 

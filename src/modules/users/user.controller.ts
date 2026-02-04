@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import { userService } from "./user.service";
 import { ApiResponse } from "../../shared/utils/api-response";
+import { AppError } from "../../shared/utils/app.error";
 import { HTTP_STATUS } from "../../shared/constants/http-codes";
 
 /**
@@ -50,13 +51,26 @@ class UserController {
     next: NextFunction,
   ): Promise<void> => {
     try {
-      // Safely accessing req.user due to express.d.ts
       if (!req.user?.id) {
         throw new Error("Unauthorized: User ID missing from request");
       }
 
-      const userId = req.user.id;
-      const updatedUser = await userService.updateUser(userId, req.body);
+      const targetId = req.params.id as string;
+      const isAdmin = req.user.role === "admin";
+
+      // Only admins can update other users' profiles
+      if (targetId !== req.user.id && !isAdmin) {
+        throw new AppError(
+          HTTP_STATUS.FORBIDDEN,
+          "You can only update your own profile",
+        );
+      }
+
+      const { personal_info, social_links } = req.body;
+      const updatedUser = await userService.updateUser(targetId, {
+        personal_info,
+        social_links,
+      });
 
       new ApiResponse(
         res,
@@ -73,7 +87,37 @@ class UserController {
     req: Request,
     res: Response,
     next: NextFunction,
-  ): Promise<void> => {};
+  ): Promise<void> => {
+    try {
+      if (!req.user?.id) {
+        throw new AppError(
+          HTTP_STATUS.UNAUTHORIZED,
+          "User ID missing from request",
+        );
+      }
+
+      const targetId = req.params.id as string;
+      const isAdmin = req.user.role === "admin";
+
+      if (targetId !== req.user.id && !isAdmin) {
+        throw new AppError(
+          HTTP_STATUS.FORBIDDEN,
+          "You can only delete your own account",
+        );
+      }
+
+      await userService.deleteUser(targetId);
+
+      new ApiResponse(
+        res,
+        HTTP_STATUS.OK,
+        "User deleted successfully",
+        null,
+      ).send();
+    } catch (error) {
+      next(error);
+    }
+  };
 }
 
 export const userController = new UserController();

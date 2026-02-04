@@ -1,9 +1,11 @@
-import { IUser } from "../../modules/users/interface/user.interface";
-
 declare global {
   namespace Express {
     interface Request {
-      user?: Partial<IUser> & { id: string };
+      user?: {
+        id: string;
+        role?: string;
+        [key: string]: any;
+      };
     }
   }
 }

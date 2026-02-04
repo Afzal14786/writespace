@@ -1,7 +1,7 @@
 import { Worker } from "bullmq";
 import { mailer } from "../infra/mailer";
 import env from "../../config/env";
-import { IEmailJob } from "../../modules/notification/interface/notification.interface";
+import { IEmailJob } from "../../modules/notification/interface/email.interface";
 import logger from "../../config/logger";
 
 // 1. Create the Worker instance
@@ -11,9 +11,11 @@ export const emailWorker = new Worker<IEmailJob>(
     // Check for stale OTP jobs (> 1 minute old)
     const now = Date.now();
     const jobAge = now - job.timestamp;
-    
+
     if (job.data.subject.includes("OTP") && jobAge > 60000) {
-      logger.warn(`Skipping stale OTP email job ${job.id} (Age: ${Math.round(jobAge/1000)}s)`);
+      logger.warn(
+        `Skipping stale OTP email job ${job.id} (Age: ${Math.round(jobAge / 1000)}s)`,
+      );
       return;
     }
 

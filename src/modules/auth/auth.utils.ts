@@ -4,14 +4,12 @@ import { Strategy as GitHubStrategy } from "passport-github2";
 import env from "../../config/env";
 import { AppError } from "../../shared/utils/app.error";
 
-/**
- * Generates a numeric OTP of specified length.
- */
+import { randomInt } from "crypto";
+
 export const generateOTP = (length: number = 6): string => {
-  const digits = "0123456789";
   let otp = "";
   for (let i = 0; i < length; i++) {
-    otp += digits[Math.floor(Math.random() * 10)];
+    otp += randomInt(0, 10).toString();
   }
   return otp;
 };

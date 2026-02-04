@@ -21,7 +21,7 @@ export const authenticate = async (
 
     const token = authHeader.split(" ")[1];
 
-    const decoded = jwt.verify(token, env.JWT_SECRET) as {
+    const decoded = jwt.verify(token, env.JWT_ACCESS_SECRET) as {
       id: string;
       role?: string;
       [key: string]: any;
@@ -42,11 +42,16 @@ export const authenticate = async (
 
 /**
  * RBAC Middleware to restrict access to specific roles.
- * usage: authorize('admin')
+ * usage: authorize('admin') or authorize('admin', 'user')
+ *
+ * Note: req.user is set from the decoded JWT in `authenticate`,
+ * which contains { id, role } at the top level.
  */
 export const authorize = (...allowedRoles: string[]) => {
   return (req: Request, res: Response, next: NextFunction) => {
-    if (!req.user || !req.user.account_info || !req.user.account_info.role) {
+    const userRole = req.user?.role;
+
+    if (!userRole) {
       return next(
         new AppError(
           HTTP_STATUS.FORBIDDEN,
@@ -55,23 +60,13 @@ export const authorize = (...allowedRoles: string[]) => {
       );
     }
 
-    if (
-      !allowedRoles.includes("admin") &&
-      req.user.account_info.role !== "admin"
-    ) {
+    if (!allowedRoles.includes(userRole)) {
       return next(
         new AppError(
           HTTP_STATUS.FORBIDDEN,
           "Access Forbidden: Insufficient permissions",
         ),
       );
-    }
-
-    if (
-      !allowedRoles.includes("user") &&
-      req.user.account_info.role !== "user"
-    ) {
-      return next(new AppError(HTTP_STATUS.FORBIDDEN, "Access Denies"));
     }
 
     next();

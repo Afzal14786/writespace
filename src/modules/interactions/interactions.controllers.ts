@@ -65,7 +65,7 @@ class InteractionsController {
     try {
       const userId = req.user?.id as string;
       const commentId = req.params.commentId as string;
-      const isAdmin = req.user?.account_info?.role === "admin";
+      const isAdmin = req.user?.role === "admin";
 
       await interactionsService.deleteComment(userId, commentId, isAdmin);
       new ApiResponse(

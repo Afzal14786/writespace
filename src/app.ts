@@ -1,7 +1,7 @@
 import express from "express";
 import dotenv from "dotenv";
+import cookieParser from "cookie-parser";
 import { connectRedis } from "./config/redis";
-import connectDB from "./config/db";
 import swaggerUi from "swagger-ui-express";
 import swaggerSpec from "./config/swagger";
 import { postsRoutes } from "./modules/posts/posts.routes";
@@ -16,42 +16,44 @@ import { apiLimiter } from "./shared/middlewares/rate-limit.middleware";
 import { env } from "./config/env";
 import { configurePassport } from "./modules/auth/auth.utils";
 import passport from "passport";
+import { pool } from "./db";
+import logger from "./config/logger";
 
 dotenv.config();
 
 const app = express();
 
-// Trust Proxy (for Load Balancers/Nginx)
 app.set("trust proxy", 1);
 
-// =========== Security & Parsing ===========
 app.use(helmet());
 app.use(cors({ origin: env.CLIENT_URL, credentials: true }));
+app.use(cookieParser());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(httpLogger);
 
-// =========== Auth Config ===========
 configurePassport();
 app.use(passport.initialize());
 
-// =========== Security & Rate Limiting ===========
 app.use("/api/v1", apiLimiter);
 
-// =========== Documentation ===========
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
-// =========== Routes ===========
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/posts", postsRoutes);
 app.use("/api/v1/users", userRoutes);
 app.use("/api/v1", interactionsRoutes);
 
-// Global Error Handler
 app.use(errorHandler);
 
-// connect Redis
 connectRedis();
-// connecting the DB
-connectDB();
+
+pool
+  .query("SELECT 1")
+  .then(() => logger.info("PostgreSQL connected successfully"))
+  .catch((err) => {
+    logger.error(`PostgreSQL connection failed: ${err}`);
+    process.exit(1);
+  });
+
 export default app;

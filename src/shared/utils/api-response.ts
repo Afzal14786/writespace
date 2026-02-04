@@ -27,7 +27,7 @@ export class ApiResponse<T> {
    */
   public send(): Response {
     return this.res.status(this.statusCode).json({
-      success: this.statusCode >= 200 && this.statusCode < 505,
+      success: this.statusCode >= 200 && this.statusCode < 300,
       statusCode: this.statusCode,
       message: this.message,
       data: this.data,

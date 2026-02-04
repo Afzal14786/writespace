@@ -64,7 +64,7 @@ router.get("/:username", userController.getProfile);
 router.put(
   "/:id",
   authenticate,
-  authorize("admin"),
+  authorize("admin", "user"),
   userController.updateProfile,
 );
 
@@ -90,7 +90,7 @@ router.put(
 router.delete(
   "/:id",
   authenticate,
-  authorize("admin"),
+  authorize("admin", "user"),
   userController.deleteUser,
 );
 

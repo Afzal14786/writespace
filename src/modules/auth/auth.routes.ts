@@ -5,7 +5,12 @@ import { validate } from "../../shared/middlewares/validate.middleware";
 import { registerSchema } from "./dtos/register.dto";
 import { loginSchema } from "./dtos/login.dto";
 import { verifyOtpSchema } from "./dtos/verify-otp.dto";
+import {
+  forgotPasswordSchema,
+  resetPasswordSchema,
+} from "./dtos/password-reset.dto";
 import { authenticate } from "../../shared/middlewares/auth.middleware";
+import { authLimiter } from "../../shared/middlewares/rate-limit.middleware";
 
 const router = Router();
 
@@ -26,7 +31,12 @@ const router = Router();
  *       200:
  *         description: OTP sent
  */
-router.post("/register", validate(registerSchema), authController.register);
+router.post(
+  "/register",
+  authLimiter,
+  validate(registerSchema),
+  authController.register,
+);
 
 /**
  * @swagger
@@ -51,6 +61,7 @@ router.post("/register", validate(registerSchema), authController.register);
  */
 router.post(
   "/verify-email",
+  authLimiter,
   validate(verifyOtpSchema),
   authController.verifyEmail,
 );
@@ -71,8 +82,20 @@ router.post(
  *       200:
  *         description: Login successful
  */
-router.post("/login", validate(loginSchema), authController.login);
+router.post("/login", authLimiter, validate(loginSchema), authController.login);
 
+router.post(
+  "/forgot-password",
+  authLimiter,
+  validate(forgotPasswordSchema),
+  authController.forgotPassword,
+);
+router.post(
+  "/reset-password",
+  authLimiter,
+  validate(resetPasswordSchema),
+  authController.resetPassword,
+);
 router.post("/refresh", authController.refreshToken);
 router.post("/logout", authenticate, authController.logout);
 
