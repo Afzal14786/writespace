@@ -1,5 +1,5 @@
 import { userService } from '../../../../src/modules/users/user.service';
-import { User } from '../../../../src/modules/users/user.model';
+import { User } from '../../../../src/db/schema/users';
 import { AppError } from '../../../../src/shared/utils/app.error';
 
 jest.mock('../../../../src/modules/users/user.model');

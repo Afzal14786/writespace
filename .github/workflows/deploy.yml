@@ -30,7 +30,7 @@ jobs:
       env:
         NODE_ENV: production
         PORT: 8080
-        MONGO_URI: ${{ secrets.MONGO_URI }}
+        DATABASE_URL: ${{ secrets.DATABASE_URL }}
         REDIS_URL: ${{ secrets.REDIS_URL }}
         REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
         JWT_SECRET: ${{ secrets.JWT_SECRET }}
