@@ -17,7 +17,7 @@ const router = Router();
 // Standard Auth
 /**
  * @swagger
- * /api/auth/register:
+ * /api/v1/auth/register:
  *   post:
  *     summary: Register a new user
  *     tags: [Auth]
@@ -40,7 +40,7 @@ router.post(
 
 /**
  * @swagger
- * /api/auth/verify-email:
+ * /api/v1/auth/verify-email:
  *   post:
  *     summary: Verify OTP and create account
  *     tags: [Auth]
@@ -68,7 +68,7 @@ router.post(
 
 /**
  * @swagger
- * /api/auth/login:
+ * /api/v1/auth/login:
  *   post:
  *     summary: Log in
  *     tags: [Auth]

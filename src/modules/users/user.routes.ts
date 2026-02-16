@@ -16,7 +16,7 @@ const router = Router();
 
 /**
  * @swagger
- * /api/users/{username}:
+ * /api/v1/users/{username}:
  *   get:
  *     summary: Get public profile
  *     tags: [Users]
@@ -34,7 +34,7 @@ router.get("/:username", userController.getProfile);
 
 /**
  * @swagger
- * /api/users/{id}:
+ * /api/v1/users/{id}:
  *   put:
  *     summary: Update user profile
  *     tags: [Users]
@@ -70,7 +70,7 @@ router.put(
 
 /**
  * @swagger
- * /api/users/{id}:
+ * /api/v1/users/{id}:
  *   delete:
  *     summary: Delete user
  *     tags: [Users]
