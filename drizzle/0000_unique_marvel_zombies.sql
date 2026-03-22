@@ -22,6 +22,7 @@ CREATE TABLE "users" (
 	"password_hash" text,
 	"username" text NOT NULL,
 	"bio" text DEFAULT '',
+	"headline" text DEFAULT '',
 	"profile_image_url" text DEFAULT 'https://api.dicebear.com/7.x/adventurer/svg?seed=mail',
 	"profile_image_public_id" text DEFAULT '',
 	"banner_image_url" text DEFAULT '',

@@ -1,5 +1,5 @@
 {
-  "id": "a5ff8bb6-7404-4b0c-8612-671a63ed1b88",
+  "id": "c5dccb0d-d5d9-440e-a81d-96e10867def1",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -203,6 +203,13 @@
         },
         "bio": {
           "name": "bio",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "headline": {
+          "name": "headline",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
