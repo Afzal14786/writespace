@@ -27,6 +27,10 @@ export const UpdateProfileSchema = z.object({
         twitter: z.string().url("Invalid Twitter URL").optional(),
         github: z.string().url("Invalid GitHub URL").optional(),
         website: z.string().url("Invalid Website URL").optional(),
+        linkedin: z.string().url("Invalid linkedin URL").optional(),
+        instagram: z.string().url("Invalid instagram URL").optional(),
+        youtube: z.string().url("Invalid youtube URL").optional(),
+        facebook: z.string().url("Invalid facebook URL").optional(),
       })
       .optional(),
   }),

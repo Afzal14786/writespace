@@ -1,92 +1,50 @@
 import { Router } from "express";
 import { userController } from "./user.controller";
-import {
-  authenticate,
-  authorize,
-} from "../../shared/middlewares/auth.middleware";
+import { authenticate, authorize } from "../../shared/middlewares/auth.middleware";
+import { validate } from "../../shared/middlewares/validate.middleware";
+import { UpdateProfileSchema } from "./dtos/update-profile.dto";
 
 const router = Router();
 
 /**
- * @swagger
- * tags:
- *   name: Users
- *   description: User management
+ * @route   GET /api/v1/users/check-username
+ * @desc    Check if a username is available during registration
+ * @access  Public
  */
+router.get("/check-username", userController.checkUsername);
 
 /**
- * @swagger
- * /api/v1/users/{username}:
- *   get:
- *     summary: Get public profile
- *     tags: [Users]
- *     parameters:
- *       - in: path
- *         name: username
- *         required: true
- *         schema:
- *           type: string
- *     responses:
- *       200:
- *         description: User profile
+ * @route   GET /api/v1/users/me
+ * @desc    Get current authenticated user's session data
+ * @access  Private
  */
-router.get("/:username", userController.getProfile);
+router.get("/me", authenticate, userController.getMe);
 
 /**
- * @swagger
- * /api/v1/users/{id}:
- *   put:
- *     summary: Update user profile
- *     tags: [Users]
- *     security:
- *       - bearerAuth: []
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             properties:
- *               fullname:
- *                 type: string
- *               bio:
- *                 type: string
- *     responses:
- *       200:
- *         description: User updated
+ * @route   GET /api/v1/users/profile/:username
+ * @desc    Get public profile data by username
+ * @access  Public
+ */
+router.get("/profile/:username", userController.getProfile);
+
+/**
+ * @route   PUT /api/v1/users/:id
+ * @desc    Update profile fields (Fullname, Bio, Social links)
+ * @access  Private (Owner/Admin)
  */
 router.put(
   "/:id",
   authenticate,
   authorize("admin", "user"),
+  validate(UpdateProfileSchema),
   userController.updateProfile,
 );
 
 /**
- * @swagger
- * /api/v1/users/{id}:
- *   delete:
- *     summary: Delete user
- *     tags: [Users]
- *     security:
- *       - bearerAuth: []
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *     responses:
- *       200:
- *         description: User deleted
+ * @route   DELETE /api/v1/users/:id
+ * @desc    Suspend/Soft-delete account
+ * @access  Private (Owner/Admin)
  */
-// Only Admin or the user themselves can delete
 router.delete(
   "/:id",
   authenticate,

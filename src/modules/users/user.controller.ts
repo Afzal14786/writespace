@@ -1,37 +1,29 @@
 import { Request, Response, NextFunction } from "express";
 import { userService } from "./user.service";
 import { ApiResponse } from "../../shared/utils/api-response";
-import { AppError } from "../../shared/utils/app.error";
 import { HTTP_STATUS } from "../../shared/constants/http-codes";
+import { AppError } from "../../shared/utils/app.error";
 
-/**
- * @class UserController
- * @description Handles incoming HTTP requests for User resources.
- * Parses requests, calls the Service layer, and sends standardized responses.
- */
 class UserController {
   /**
-   * GET /api/users/:username
-   * Fetches public profile details for a specific user.
-   * @param {Request} req - Express Request object. Expects `username` in params.
-   * @param {Response} res - Express Response object.
-   * @param {NextFunction} next - Express NextFunction for error handling.
+   * GET /api/v1/users/check-username?username=afzal
    */
-  public getProfile = async (
-    req: Request,
-    res: Response,
-    next: NextFunction,
-  ): Promise<void> => {
+  public checkUsername = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      const username = req.params.username as string;
-      const user = await userService.getUserProfile(username);
-
-      // Now strictly typed: <Partial<IUser>> is inferred from the 'user' variable
+      // Explicitly cast to string to satisfy TS
+      const username = req.query.username as string;
+      
+      if (!username) {
+        throw new AppError(HTTP_STATUS.BAD_REQUEST, "Username query parameter is required");
+      }
+      
+      const result = await userService.checkUsernameAvailability(username);
+      
       new ApiResponse(
-        res,
-        HTTP_STATUS.OK,
-        "Profile fetched successfully",
-        user,
+        res, 
+        HTTP_STATUS.OK, 
+        "Username availability checked", 
+        result
       ).send();
     } catch (error) {
       next(error);
@@ -39,80 +31,104 @@ class UserController {
   };
 
   /**
-   * PUT /api/users/profile
-   * Updates the authenticated user's profile.
-   * @param {Request} req - Express Request object containing 'user'.
-   * @param {Response} res - Express Response object.
-   * @param {NextFunction} next - Express NextFunction.
+   * GET /api/v1/users/me
    */
-  public updateProfile = async (
-    req: Request,
-    res: Response,
-    next: NextFunction,
-  ): Promise<void> => {
+  public getMe = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       if (!req.user?.id) {
-        throw new Error("Unauthorized: User ID missing from request");
+        throw new AppError(HTTP_STATUS.UNAUTHORIZED, "Session expired or invalid.");
       }
-
-      const targetId = req.params.id as string;
-      const isAdmin = req.user.role === "admin";
-
-      // Only admins can update other users' profiles
-      if (targetId !== req.user.id && !isAdmin) {
-        throw new AppError(
-          HTTP_STATUS.FORBIDDEN,
-          "You can only update your own profile",
-        );
-      }
-
-      const { personal_info, social_links } = req.body;
-      const updatedUser = await userService.updateUser(targetId, {
-        personal_info,
-        social_links,
-      });
-
+      
+      const userRecord = await userService.getMe(req.user.id);
+      
       new ApiResponse(
-        res,
-        HTTP_STATUS.OK,
-        "Profile updated successfully",
-        updatedUser,
+        res, 
+        HTTP_STATUS.OK, 
+        "Current user record retrieved", 
+        userRecord
       ).send();
     } catch (error) {
       next(error);
     }
   };
 
-  public deleteUser = async (
-    req: Request,
-    res: Response,
-    next: NextFunction,
-  ): Promise<void> => {
+  /**
+   * GET /api/v1/users/profile/:username
+   */
+  public getProfile = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      if (!req.user?.id) {
-        throw new AppError(
-          HTTP_STATUS.UNAUTHORIZED,
-          "User ID missing from request",
-        );
+      // FIX: Destructure correctly from req.params
+      const { username } = req.params;
+      
+      if (!username) {
+        throw new AppError(HTTP_STATUS.BAD_REQUEST, "Username parameter is required");
       }
-
-      const targetId = req.params.id as string;
-      const isAdmin = req.user.role === "admin";
-
-      if (targetId !== req.user.id && !isAdmin) {
-        throw new AppError(
-          HTTP_STATUS.FORBIDDEN,
-          "You can only delete your own account",
-        );
-      }
-
-      await userService.deleteUser(targetId);
-
+      
+      const publicProfile = await userService.getUserProfile(username);
+      
       new ApiResponse(
-        res,
-        HTTP_STATUS.OK,
-        "User deleted successfully",
-        null,
+        res, 
+        HTTP_STATUS.OK, 
+        "User profile retrieved successfully", 
+        publicProfile
+      ).send();
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  /**
+   * PUT /api/v1/users/:id
+   */
+  public updateProfile = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      // FIX: Force TS to treat this as string
+      const id = req.params.id as string;
+      
+      if (!req.user) {
+        throw new AppError(HTTP_STATUS.UNAUTHORIZED, "Authentication required");
+      }
+
+      if (id !== req.user.id && req.user.role !== "admin") {
+        throw new AppError(HTTP_STATUS.FORBIDDEN, "You do not have permission to update this profile");
+      }
+      
+      const updatedUser = await userService.updateUser(id, req.body);
+      
+      new ApiResponse(
+        res, 
+        HTTP_STATUS.OK, 
+        "Profile updated successfully", 
+        updatedUser
+      ).send();
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  /**
+   * DELETE /api/v1/users/:id
+   */
+  public deleteUser = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      // FIX: Force TS to treat this as string
+      const id = req.params.id as string;
+      
+      if (!req.user) {
+        throw new AppError(HTTP_STATUS.UNAUTHORIZED, "Authentication required");
+      }
+
+      if (id !== req.user.id && req.user.role !== "admin") {
+        throw new AppError(HTTP_STATUS.FORBIDDEN, "You do not have permission to delete this account");
+      }
+
+      await userService.deleteUser(id);
+      
+      new ApiResponse(
+        res, 
+        HTTP_STATUS.OK, 
+        "Account has been successfully suspended", 
+        null
       ).send();
     } catch (error) {
       next(error);
