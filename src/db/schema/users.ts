@@ -24,6 +24,7 @@ export const users = pgTable("users", {
   passwordHash: text("password_hash"),
   username: text("username").notNull().unique(),
   bio: text("bio").default(""),
+  headline: text("headline").default(""),
   profileImageUrl: text("profile_image_url").default(
     "https://api.dicebear.com/7.x/adventurer/svg?seed=mail",
   ),
