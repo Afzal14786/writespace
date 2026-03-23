@@ -7,6 +7,7 @@ import {
   timestamp,
   pgEnum,
   index,
+  jsonb,
 } from "drizzle-orm/pg-core";
 import { users } from "./users";
 
@@ -17,6 +18,11 @@ export const postStatusEnum = pgEnum("post_status", [
   "archived",
   "trash",
 ]);
+
+export interface CodeSnippetSchema {
+  language: string;
+  code: string;
+}
 
 export const posts = pgTable(
   "posts",
@@ -35,7 +41,10 @@ export const posts = pgTable(
     coverImageMobileUrl: text("cover_image_mobile_url"),
     // media
     audioUrl: text("audio_url"),
-    attachments: text("attachments").array().default([]),
+    attachments: text("attachments").array().default([]),    
+    media: text("media").array().default([]), 
+    codeSnippets: jsonb("code_snippets").$type<CodeSnippetSchema[]>().default([]), 
+
     // taxonomy
     categoryId: text("category_id"),
     tags: text("tags").array().default([]),

@@ -1,7 +1,7 @@
-import { eq, and, sql, desc, count, ne } from "drizzle-orm";
+import { eq, and, sql, desc, count } from "drizzle-orm";
 import { db } from "../../db";
 import { posts, likes, users } from "../../db/schema";
-import { Post } from "../../db/schema";
+import { Post, CodeSnippetSchema } from "../../db/schema/posts"; // Strict type imports
 import { PostStatus } from "./interfaces/post.interface";
 import { CreatePostInput } from "./dtos/create-post.dto";
 import slugify from "slugify";
@@ -16,7 +16,7 @@ import { NotificationType } from "../../modules/notification/interface/notificat
 class PostService {
   public async createPost(
     authorId: string,
-    data: CreatePostInput,
+    data: CreatePostInput & { media?: string[], codeSnippets?: CodeSnippetSchema[] }, 
   ): Promise<Post> {
     const cleanContent = this.sanitizeContent(data.content);
     const slug = await this.generateUniqueSlug(data.title);
@@ -37,6 +37,8 @@ class PostService {
           authorId,
           readTime,
           tags: data.tags || [],
+          media: data.media || [],                 
+          codeSnippets: data.codeSnippets || [],   
           coverImageUrl: data.coverImage?.url,
           coverImageAltText: data.coverImage?.altText,
           coverImageCredit: data.coverImage?.credit,
@@ -57,82 +59,98 @@ class PostService {
   }
 
   public async getPost(postId: string, requesterId?: string) {
-    const [post] = await db
-      .select({
-        post: posts,
-        authorUsername: users.username,
-        authorProfileImage: users.profileImageUrl,
-      })
+    // 🔥 FIX: Conditionally construct the select fields to prevent Drizzle SQL crashes
+    const selectFields = {
+      post: posts,
+      authorUsername: users.username,
+      authorProfileImage: users.profileImageUrl,
+      ...(requesterId ? {
+        isLikedByMe: sql<boolean>`exists(select 1 from ${likes} where ${likes.postId} = ${posts.id} and ${likes.userId} = ${requesterId})`.mapWith(Boolean)
+      } : {})
+    };
+
+    const [row] = await db
+      .select(selectFields)
       .from(posts)
       .leftJoin(users, eq(posts.authorId, users.id))
       .where(eq(posts.id, postId))
       .limit(1);
 
-    if (!post) {
+    if (!row) {
       throw new AppError(HTTP_STATUS.NOT_FOUND, "Post not found");
     }
 
-    const isOwner = requesterId === post.post.authorId;
-    if (!isOwner && post.post.status !== "published") {
+    const isOwner = requesterId === row.post.authorId;
+    if (!isOwner && row.post.status !== "published") {
       throw new AppError(HTTP_STATUS.NOT_FOUND, "Post not found");
     }
 
     return {
-      ...post.post,
+      ...row.post,
+      isLikedByMe: 'isLikedByMe' in row ? !!row.isLikedByMe : false, // Safely mapped in JS
       author: {
-        username: post.authorUsername,
-        profileImageUrl: post.authorProfileImage,
+        id: row.post.authorId,
+        username: row.authorUsername,
+        profileImageUrl: row.authorProfileImage,
       },
     };
   }
 
-  public async getPosts(page: number, limit: number) {
+  public async getPosts(page: number, limit: number, requesterId?: string) {
     const offset = (page - 1) * limit;
 
+    // 🔥 FIX: Conditionally construct the select fields to prevent Drizzle SQL crashes
+    const selectFields = {
+      id: posts.id,
+      title: posts.title,
+      slug: posts.slug,
+      subtitle: posts.subtitle,
+      content: posts.content,
+      excerpt: posts.excerpt,
+      media: posts.media,               
+      codeSnippets: posts.codeSnippets, 
+      coverImageUrl: posts.coverImageUrl,
+      coverImageAltText: posts.coverImageAltText,
+      tags: posts.tags,
+      authorId: posts.authorId,
+      status: posts.status,
+      publishDate: posts.publishDate,
+      viewCount: posts.viewCount,
+      likeCount: posts.likeCount,
+      commentCount: posts.commentCount,
+      shareCount: posts.shareCount,
+      readTime: posts.readTime,
+      createdAt: posts.createdAt,
+      authorUsername: users.username,
+      authorProfileImage: users.profileImageUrl,
+      ...(requesterId ? {
+        isLikedByMe: sql<boolean>`exists(select 1 from ${likes} where ${likes.postId} = ${posts.id} and ${likes.userId} = ${requesterId})`.mapWith(Boolean)
+      } : {})
+    };
+
     const [postsResult, [totalResult]] = await Promise.all([
-      db
-        .select({
-          id: posts.id,
-          title: posts.title,
-          slug: posts.slug,
-          subtitle: posts.subtitle,
-          excerpt: posts.excerpt,
-          coverImageUrl: posts.coverImageUrl,
-          coverImageAltText: posts.coverImageAltText,
-          tags: posts.tags,
-          authorId: posts.authorId,
-          status: posts.status,
-          publishDate: posts.publishDate,
-          viewCount: posts.viewCount,
-          likeCount: posts.likeCount,
-          commentCount: posts.commentCount,
-          shareCount: posts.shareCount,
-          readTime: posts.readTime,
-          createdAt: posts.createdAt,
-          authorUsername: users.username,
-          authorProfileImage: users.profileImageUrl,
-        })
+      db.select(selectFields)
         .from(posts)
         .leftJoin(users, eq(posts.authorId, users.id))
         .where(eq(posts.status, "published"))
         .orderBy(desc(posts.publishDate))
         .offset(offset)
         .limit(limit),
-      db
-        .select({ total: count() })
-        .from(posts)
-        .where(eq(posts.status, "published")),
+      db.select({ total: count() }).from(posts).where(eq(posts.status, "published")),
     ]);
 
-    const formattedPosts = postsResult.map(
-      ({ authorUsername, authorProfileImage, ...post }) => ({
+    const formattedPosts = postsResult.map((row) => {
+      const { authorUsername, authorProfileImage, ...post } = row;
+      return {
         ...post,
+        isLikedByMe: 'isLikedByMe' in row ? !!row.isLikedByMe : false, // Safely mapped in JS
         author: {
+          id: post.authorId,
           username: authorUsername,
           profileImageUrl: authorProfileImage,
         },
-      }),
-    );
+      };
+    });
 
     return {
       posts: formattedPosts,
@@ -156,13 +174,10 @@ class PostService {
     }
 
     if (post.authorId !== userId) {
-      throw new AppError(
-        HTTP_STATUS.FORBIDDEN,
-        "You are not authorized to edit this post",
-      );
+      throw new AppError(HTTP_STATUS.FORBIDDEN, "You are not authorized to edit this post");
     }
 
-    const updates: Record<string, any> = {};
+    const updates: Record<string, unknown> = {};
 
     if (data.title && data.title !== post.title) {
       updates.title = data.title;
@@ -171,16 +186,14 @@ class PostService {
 
     if (data.content) {
       updates.content = this.sanitizeContent(data.content);
-      updates.readTime = this.calculateReadTime(updates.content);
+      updates.readTime = this.calculateReadTime(updates.content as string);
     }
 
     if (data.subtitle !== undefined) updates.subtitle = data.subtitle;
     if (data.tags !== undefined) updates.tags = data.tags;
 
     if (data.isPublished !== undefined) {
-      updates.status = data.isPublished
-        ? PostStatus.PUBLISHED
-        : PostStatus.DRAFT;
+      updates.status = data.isPublished ? PostStatus.PUBLISHED : PostStatus.DRAFT;
       if (data.isPublished && !post.publishDate) {
         updates.publishDate = new Date();
       }
@@ -217,22 +230,12 @@ class PostService {
     }
 
     if (post.authorId !== userId && !isAdmin) {
-      throw new AppError(
-        HTTP_STATUS.FORBIDDEN,
-        "You are not authorized to delete this post",
-      );
+      throw new AppError(HTTP_STATUS.FORBIDDEN, "You are not authorized to delete this post");
     }
 
     await db.transaction(async (tx) => {
-      await tx
-        .update(posts)
-        .set({ status: "trash" })
-        .where(eq(posts.id, postId));
-
-      await tx
-        .update(users)
-        .set({ totalPosts: sql`GREATEST(${users.totalPosts} - 1, 0)` })
-        .where(eq(users.id, post.authorId));
+      await tx.update(posts).set({ status: "trash" }).where(eq(posts.id, postId));
+      await tx.update(users).set({ totalPosts: sql`GREATEST(${users.totalPosts} - 1, 0)` }).where(eq(users.id, post.authorId));
     });
   }
 
@@ -251,21 +254,12 @@ class PostService {
         .limit(1);
 
       if (existingLike) {
-        await tx
-          .delete(likes)
-          .where(and(eq(likes.postId, postId), eq(likes.userId, userId)));
-        await tx
-          .update(posts)
-          .set({ likeCount: sql`${posts.likeCount} - 1` })
-          .where(eq(posts.id, postId));
+        await tx.delete(likes).where(and(eq(likes.postId, postId), eq(likes.userId, userId)));
+        await tx.update(posts).set({ likeCount: sql`${posts.likeCount} - 1` }).where(eq(posts.id, postId));
         resultStatus = "unliked";
       } else {
         await tx.insert(likes).values({ postId, userId });
-        const [post] = await tx
-          .update(posts)
-          .set({ likeCount: sql`${posts.likeCount} + 1` })
-          .where(eq(posts.id, postId))
-          .returning({ authorId: posts.authorId });
+        const [post] = await tx.update(posts).set({ likeCount: sql`${posts.likeCount} + 1` }).where(eq(posts.id, postId)).returning({ authorId: posts.authorId });
         resultStatus = "liked";
 
         if (post && post.authorId !== userId) {
@@ -302,22 +296,15 @@ class PostService {
       throw new AppError(HTTP_STATUS.NOT_FOUND, "Post not found");
     }
 
-    const baseUrl = env.CLIENT_URL || "https://blogify.com";
+    const baseUrl = env.CLIENT_URL || "https://writespace.com";
     const postUrl = `${baseUrl}/blog/${post.slug}`;
 
     let shareUrl = "";
     switch (platform.toLowerCase()) {
-      case "twitter":
-        shareUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(post.title)}&url=${encodeURIComponent(postUrl)}`;
-        break;
-      case "facebook":
-        shareUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(postUrl)}`;
-        break;
-      case "linkedin":
-        shareUrl = `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(postUrl)}`;
-        break;
-      default:
-        shareUrl = postUrl;
+      case "twitter": shareUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(post.title)}&url=${encodeURIComponent(postUrl)}`; break;
+      case "facebook": shareUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(postUrl)}`; break;
+      case "linkedin": shareUrl = `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(postUrl)}`; break;
+      default: shareUrl = postUrl;
     }
 
     await interactionsService.logShare(userId, postId, platform);
@@ -335,25 +322,15 @@ class PostService {
     });
   }
 
-  private async generateUniqueSlug(
-    title: string,
-    maxRetries = 5,
-  ): Promise<string> {
+  private async generateUniqueSlug(title: string, maxRetries = 5): Promise<string> {
     const base = slugify(title, { lower: true, strict: true });
     let slug = base;
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
-      const [existing] = await db
-        .select({ id: posts.id })
-        .from(posts)
-        .where(eq(posts.slug, slug))
-        .limit(1);
-
+      const [existing] = await db.select({ id: posts.id }).from(posts).where(eq(posts.slug, slug)).limit(1);
       if (!existing) return slug;
-
       slug = `${base}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     }
-
     return slug;
   }
 
