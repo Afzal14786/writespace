@@ -86,30 +86,25 @@ class PostsController {
   };
 
   public getPosts = async (
-    // 🔥 FIX: We explicitly define the expected query parameters for this specific route!
-    req: AuthRequest<unknown, { page?: string; limit?: string }>, 
+    req: AuthRequest<unknown, { cursor?: string; limit?: string }>, 
     res: Response, 
     next: NextFunction
   ) => {
     try {
-      const pageQuery = req.query.page;
+      const cursor = req.query.cursor;
       const limitQuery = req.query.limit;
       
-      // 🔥 FIX: Safe parsing. If undefined, it falls back to "1" / "20", satisfying parseInt's string requirement
-      const page = Math.max(1, parseInt(pageQuery || "1", 10));
       const limit = Math.min(50, Math.max(1, parseInt(limitQuery || "20", 10)));
-      
       const requesterId = req.user?.id;
 
-      const { posts, total } = await postService.getPosts(page, limit, requesterId);
+      // Pass the limit and cursor to the service
+      const { posts, nextCursor } = await postService.getPosts(limit, cursor, requesterId);
 
       new ApiResponse(res, HTTP_STATUS.OK, "Posts fetched successfully", {
         posts,
         pagination: {
-          page,
           limit,
-          total,
-          totalPages: Math.ceil(total / limit),
+          nextCursor, // Send the cursor back to React
         },
       }).send();
     } catch (error) {

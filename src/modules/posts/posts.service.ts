@@ -1,4 +1,4 @@
-import { eq, and, sql, desc, count } from "drizzle-orm";
+import { eq, and, sql, desc, lt } from "drizzle-orm";
 import { db } from "../../db";
 import { posts, likes, users } from "../../db/schema";
 import { Post, CodeSnippetSchema } from "../../db/schema/posts"; // Strict type imports
@@ -96,10 +96,9 @@ class PostService {
     };
   }
 
-  public async getPosts(page: number, limit: number, requesterId?: string) {
-    const offset = (page - 1) * limit;
-
-    // 🔥 FIX: Conditionally construct the select fields to prevent Drizzle SQL crashes
+  // BIG TECH UPGRADE: Replaced 'page' with 'cursor'
+  public async getPosts(limit: number, cursor?: string, requesterId?: string) {
+    // 1. Conditionally construct the select fields
     const selectFields = {
       id: posts.id,
       title: posts.title,
@@ -128,22 +127,36 @@ class PostService {
       } : {})
     };
 
-    const [postsResult, [totalResult]] = await Promise.all([
-      db.select(selectFields)
-        .from(posts)
-        .leftJoin(users, eq(posts.authorId, users.id))
-        .where(eq(posts.status, "published"))
-        .orderBy(desc(posts.publishDate))
-        .offset(offset)
-        .limit(limit),
-      db.select({ total: count() }).from(posts).where(eq(posts.status, "published")),
-    ]);
+    // 2. Build the WHERE conditions dynamically
+    const conditions = [eq(posts.status, "published")];
+    
+    // If the frontend passed a cursor, only fetch posts older than that cursor
+    if (cursor) {
+      conditions.push(lt(posts.publishDate, new Date(cursor)));
+    }
+
+    // 3. Execute the Cursor Query (Notice: No offset() used!)
+    const postsResult = await db.select(selectFields)
+      .from(posts)
+      .leftJoin(users, eq(posts.authorId, users.id))
+      .where(and(...conditions))
+      .orderBy(desc(posts.publishDate))
+      .limit(limit);
+
+    // 4. Calculate the next cursor based on the last item in the array
+    let nextCursor: string | null = null;
+    if (postsResult.length === limit) {
+      const lastPost = postsResult[postsResult.length - 1];
+      if (lastPost.publishDate) {
+        nextCursor = lastPost.publishDate.toISOString();
+      }
+    }
 
     const formattedPosts = postsResult.map((row) => {
       const { authorUsername, authorProfileImage, ...post } = row;
       return {
         ...post,
-        isLikedByMe: 'isLikedByMe' in row ? !!row.isLikedByMe : false, // Safely mapped in JS
+        isLikedByMe: 'isLikedByMe' in row ? !!row.isLikedByMe : false,
         author: {
           id: post.authorId,
           username: authorUsername,
@@ -154,7 +167,7 @@ class PostService {
 
     return {
       posts: formattedPosts,
-      total: totalResult.total,
+      nextCursor, // Return the cursor instead of 'total'
     };
   }
 

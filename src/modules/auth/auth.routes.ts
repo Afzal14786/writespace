@@ -78,10 +78,10 @@ router.post("/verify-email", emailActionLimiter, validate(verifyOtpSchema), auth
  */
 router.post("/login", loginLimiter, validate(loginSchema), authController.login);
 
-router.post("/forgot-password", emailActionLimiter, validate(forgotPasswordSchema), authController.forgotPassword);
+router.post("/forgot-password", emailActionLimiter, authenticate, validate(forgotPasswordSchema), authController.forgotPassword);
 router.post("/reset-password", emailActionLimiter, validate(resetPasswordSchema), authController.resetPassword);
 router.post("/refresh-token", authController.refreshToken);
-router.post("/logout", authenticate, authController.logout);
+router.post("/logout", authController.logout);
 
 // Google Auth
 router.get(
