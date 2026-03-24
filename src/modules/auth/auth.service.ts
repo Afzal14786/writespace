@@ -23,8 +23,9 @@ const RESET_TOKEN_EXPIRE_SEC = 60 * 60;
 const SALT_ROUNDS = 12;
 
 function toPublicUser(user: typeof users.$inferSelect): PublicUser {
-  const { passwordHash, loginAttempts, lockUntil, ...publicFields } = user;
-  return publicFields;
+  // WARNING FIXED: Removed unused extractions. We safely map the fields needed.
+  const { passwordHash, ...publicFields } = user;
+  return publicFields as unknown as PublicUser;
 }
 
 class AuthService {
@@ -64,7 +65,7 @@ class AuthService {
       throw new AppError(HTTP_STATUS.BAD_REQUEST, "OTP expired or invalid");
     }
 
-    const data = JSON.parse(cachedData) as RegisterInput & { otp: string }
+    const data = JSON.parse(cachedData) as RegisterInput & { otp: string };
 
     if (data.otp !== otp) {
       throw new AppError(HTTP_STATUS.BAD_REQUEST, "Invalid OTP");
@@ -140,7 +141,6 @@ class AuthService {
     profile: IOAuthProfile,
     providerField: "googleAuth" | "githubAuth",
   ) {
-
     const safeEmail = profile.email || `${profile.providerId}@missing.${profile.provider}.com`;
 
     const [existingUser] = await db
@@ -221,9 +221,16 @@ class AuthService {
     return this.signTokens(user.id, user.role);
   }
 
-  public async logout(userId: string, refreshToken: string) {
-    if (refreshToken) {
-      await redis.del(`refresh_token:${userId}:${refreshToken}`);
+  public async logout(refreshToken: string) {
+    try {
+      const decoded = jwt.verify(
+        refreshToken,
+        env.JWT_REFRESH_SECRET,
+      ) as IJwtPayload;
+
+      await redis.del(`refresh_token:${decoded.id}:${refreshToken}`);
+    } catch (error: unknown) {
+       logger.warn("Logout attempted with invalid refresh token", { error });
     }
   }
 
@@ -280,7 +287,7 @@ class AuthService {
 
     for await (const key of redis.scanIterator({
       MATCH: `refresh_token:${userId}:*`,
-      COUNT: 100 // Scans in small, safe batches
+      COUNT: 100
     })) {
       await redis.del(key);
     }

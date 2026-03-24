@@ -1,10 +1,9 @@
-import { Router } from "express";
+import { Router, RequestHandler } from "express";
 import { postsController } from "./posts.controller";
-import {
-  authenticate,
-  authorize,
-} from "../../shared/middlewares/auth.middleware";
+import { authenticate } from "../../shared/middlewares/auth.middleware";
 import { upload } from "../../shared/middlewares/upload.middleware";
+import { validate } from "../../shared/middlewares/validate.middleware";
+import { CreatePostSchema } from "./dtos/create-post.dto";
 
 const router = Router();
 
@@ -36,7 +35,7 @@ const router = Router();
  *       200:
  *         description: List of posts
  */
-router.get("/", postsController.getPosts);
+router.get("/", postsController.getPosts as RequestHandler);
 
 /**
  * @swagger
@@ -54,7 +53,7 @@ router.get("/", postsController.getPosts);
  *       200:
  *         description: Post details
  */
-router.get("/:id", postsController.getPost);
+router.get("/:id", postsController.getPost as RequestHandler);
 
 /**
  * @swagger
@@ -86,15 +85,13 @@ router.get("/:id", postsController.getPost);
  */
 // Note: Validation for multipart/form-data with Zod is tricky directly in middleware if logic is complex.
 // Ideally, we validate the parsed body. `upload` middleware runs first.
-import { validate } from "../../shared/middlewares/validate.middleware";
-import { CreatePostSchema } from "./dtos/create-post.dto";
 
 router.post(
   "/",
-  authenticate,
+  authenticate as RequestHandler,
   upload.single("banner"),
-  validate(CreatePostSchema),
-  postsController.createPost,
+  validate(CreatePostSchema) as RequestHandler,
+  postsController.createPost as RequestHandler,
 );
 
 /**
@@ -126,7 +123,7 @@ router.post(
  *       200:
  *         description: Post updated
  */
-router.put("/:id", authenticate, postsController.updatePost);
+router.put("/:id", authenticate as RequestHandler, postsController.updatePost as RequestHandler);
 
 /**
  * @swagger
@@ -146,7 +143,7 @@ router.put("/:id", authenticate, postsController.updatePost);
  *       200:
  *         description: Post deleted
  */
-router.delete("/:id", authenticate, postsController.deletePost);
+router.delete("/:id", authenticate as RequestHandler, postsController.deletePost as RequestHandler);
 
 /**
  * @swagger
@@ -170,7 +167,7 @@ router.delete("/:id", authenticate, postsController.deletePost);
 // Based on outline it might be missing, I'll add the route assuming I'll fix the controller if needed.
 // Checking outline... outline showed: createPost, getPost, getPosts, updatePost, deletePost.
 // likePost IS MISSING in controller. I will add the route but I MUST add the method to controller next.
-router.post("/:id/like", authenticate, postsController.likePost);
+router.post("/:id/like", authenticate as RequestHandler, postsController.likePost as RequestHandler);
 
 /**
  * @swagger
@@ -197,6 +194,6 @@ router.post("/:id/like", authenticate, postsController.likePost);
  *       200:
  *         description: Share link generated
  * */
-router.post("/:id/share", postsController.sharePost);
+router.post("/:id/share", postsController.sharePost as RequestHandler);
 
 export const postsRoutes = router;

@@ -57,14 +57,13 @@ class UserController {
    */
   public getProfile = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      // FIX: Destructure correctly from req.params
-      const { username } = req.params;
+      const username = req.params.username;
       
       if (!username) {
         throw new AppError(HTTP_STATUS.BAD_REQUEST, "Username parameter is required");
       }
       
-      const publicProfile = await userService.getUserProfile(username);
+      const publicProfile = await userService.getUserProfile(username as string);
       
       new ApiResponse(
         res, 
@@ -82,7 +81,6 @@ class UserController {
    */
   public updateProfile = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      // FIX: Force TS to treat this as string
       const id = req.params.id as string;
       
       if (!req.user) {
@@ -93,7 +91,10 @@ class UserController {
         throw new AppError(HTTP_STATUS.FORBIDDEN, "You do not have permission to update this profile");
       }
       
-      const updatedUser = await userService.updateUser(id, req.body);
+      // FIX: Dynamically extract the exact required type from the service signature to cast req.body safely.
+      const updateData = req.body as Parameters<typeof userService.updateUser>[1];
+      
+      const updatedUser = await userService.updateUser(id, updateData);
       
       new ApiResponse(
         res, 
@@ -111,7 +112,6 @@ class UserController {
    */
   public deleteUser = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      // FIX: Force TS to treat this as string
       const id = req.params.id as string;
       
       if (!req.user) {

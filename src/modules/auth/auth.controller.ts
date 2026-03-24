@@ -84,11 +84,11 @@ export class AuthController {
   // 4. Refresh Token
   public async refreshToken(req: Request, res: Response, next: NextFunction) {
     try {
-      // error says: Unsafe member access .refreshToken on an `any` value.
+      // 100% Type Safe Cookie Parsing
       const cookies = req.cookies as Record<string, string> | undefined;
       const body = req.body as Record<string, unknown> | undefined;
 
-      const refreshToken = cookies?.refreshToken || (body?.refreshToken as string | undefined);
+      const refreshToken = cookies?.refreshToken || (typeof body?.refreshToken === 'string' ? body.refreshToken : undefined);
 
       if (!refreshToken) {
         new ApiResponse(
@@ -100,7 +100,6 @@ export class AuthController {
         return;
       }
 
-      // error says: Unsafe argument of type `any` assigned to a parameter of type `string`.
       const tokens = await authService.refreshToken(refreshToken);
       res.cookie("refreshToken", tokens.refreshToken, REFRESH_COOKIE_OPTIONS);
 
@@ -115,13 +114,14 @@ export class AuthController {
   // 5. Logout
   public async logout(req: Request, res: Response, next: NextFunction) {
     try {
+      // We read the cookie directly to destroy the session. 
+      // We DO NOT rely on req.user, because the access token might be expired.
       const cookies = req.cookies as Record<string, string> | undefined;
-      const body = req.body as Record<string, unknown> | undefined;
-      
-      const refreshToken = cookies?.refreshToken || (body?.refreshToken as string | undefined);
+      const refreshToken = cookies?.refreshToken;
 
-      if (req.user?.id && refreshToken) {
-        await authService.logout(req.user.id, refreshToken);
+      if (refreshToken) {
+         // Pass just the token to the service to destroy it
+        await authService.logout(refreshToken);
       }
 
       res.clearCookie("refreshToken");
