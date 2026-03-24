@@ -7,7 +7,7 @@ const store = new RedisStore({
 });
 
 export const apiLimiter = rateLimit({
-  store, // SCALABILITY FIX: Use Redis
+  store, 
   windowMs: 15 * 60 * 1000, 
   max: 100, 
   standardHeaders: true, 
@@ -18,12 +18,38 @@ export const apiLimiter = rateLimit({
   },
 });
 
-export const authLimiter = rateLimit({
-  store, // SCALABILITY FIX: Use Redis
-  windowMs: 60 * 60 * 1000, 
-  max: 20, // INCREASED slightly: 10 is too strict if multiple legit users share an office/college WiFi (NAT IP)
+export const loginLimiter = rateLimit({
+  store,
+  windowMs: 15 * 60 * 1000, 
+  max: 7, 
+  standardHeaders: true,
+  legacyHeaders: false,
   message: {
     success: false,
-    message: "Too many login attempts, please try again after an hour",
+    message: "Too many login attempts. Please try again in 15 minutes.",
+  },
+});
+
+export const registerLimiter = rateLimit({
+  store,
+  windowMs: 60 * 60 * 1000, 
+  max: 3, 
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many accounts created from this IP. Please try again later.",
+  },
+});
+
+export const emailActionLimiter = rateLimit({
+  store,
+  windowMs: 60 * 60 * 1000, 
+  max: 5, 
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many email requests. Please check your inbox or try again later.",
   },
 });
