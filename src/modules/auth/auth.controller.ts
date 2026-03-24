@@ -75,7 +75,6 @@ export class AuthController {
       new ApiResponse(res, HTTP_STATUS.OK, "Login successful", {
         user,
         accessToken,
-        refreshToken,
       }).send();
     } catch (error) {
       next(error);
@@ -107,7 +106,6 @@ export class AuthController {
 
       new ApiResponse(res, HTTP_STATUS.OK, "Token refreshed", {
         accessToken: tokens.accessToken,
-        refreshToken: tokens.refreshToken
       }).send();
     } catch (error) {
       next(error);
