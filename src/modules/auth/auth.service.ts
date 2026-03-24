@@ -64,7 +64,7 @@ class AuthService {
       throw new AppError(HTTP_STATUS.BAD_REQUEST, "OTP expired or invalid");
     }
 
-    const data = JSON.parse(cachedData);
+    const data = JSON.parse(cachedData) as RegisterInput & { otp: string }
 
     if (data.otp !== otp) {
       throw new AppError(HTTP_STATUS.BAD_REQUEST, "Invalid OTP");
@@ -140,10 +140,13 @@ class AuthService {
     profile: IOAuthProfile,
     providerField: "googleAuth" | "githubAuth",
   ) {
+
+    const safeEmail = profile.email || `${profile.providerId}@missing.${profile.provider}.com`;
+
     const [existingUser] = await db
       .select()
       .from(users)
-      .where(eq(users.email, profile.email))
+      .where(eq(users.email, safeEmail))
       .limit(1);
 
     if (existingUser) {
@@ -193,14 +196,17 @@ class AuthService {
       throw new AppError(HTTP_STATUS.UNAUTHORIZED, "Invalid Refresh Token");
     }
 
-    const storedToken = await redis.get(`refresh_token:${decoded.id}`);
-    if (!storedToken || storedToken !== oldRefreshToken) {
-      await redis.del(`refresh_token:${decoded.id}`);
+    const redisKey = `refresh_token:${decoded.id}:${oldRefreshToken}`;
+    const isValid = await redis.get(redisKey);
+    
+    if (!isValid) {
       throw new AppError(
         HTTP_STATUS.UNAUTHORIZED,
         "Session expired or invalid",
       );
     }
+
+    await redis.del(redisKey);
 
     const [user] = await db
       .select({ id: users.id, role: users.role })
@@ -215,8 +221,10 @@ class AuthService {
     return this.signTokens(user.id, user.role);
   }
 
-  public async logout(userId: string) {
-    await redis.del(`refresh_token:${userId}`);
+  public async logout(userId: string, refreshToken: string) {
+    if (refreshToken) {
+      await redis.del(`refresh_token:${userId}:${refreshToken}`);
+    }
   }
 
   public async forgotPassword(email: string) {
@@ -268,9 +276,14 @@ class AuthService {
     const passwordHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
 
     await db.update(users).set({ passwordHash }).where(eq(users.id, userId));
-
     await redis.del(`password_reset:${token}`);
-    await redis.del(`refresh_token:${userId}`);
+
+    for await (const key of redis.scanIterator({
+      MATCH: `refresh_token:${userId}:*`,
+      COUNT: 100 // Scans in small, safe batches
+    })) {
+      await redis.del(key);
+    }
 
     await notificationService.sendPasswordUpdateEmail(
       user.email,
@@ -294,7 +307,7 @@ class AuthService {
       { expiresIn: refreshExpiry },
     );
 
-    await redis.set(`refresh_token:${userId}`, refreshToken, {
+    await redis.set(`refresh_token:${userId}:${refreshToken}`, "valid", {
       EX: REFRESH_TOKEN_EXPIRE_SEC,
     });
 

@@ -1,17 +1,15 @@
-import { PublicUser } from "../../modules/users/interface/user.interface";
+export {};
 
 declare global {
   namespace Express {
-    interface Request {
-      /**
-       * The authenticated user object attached by the authenticate middleware.
-       * Uses PublicUser to ensure sensitive fields like passwordHash are excluded.
-       */
-      user?: PublicUser;
+    interface User {
+      id: string;
+      role?: string;
+      emails?: Array<{ value: string }>;
+      displayName?: string;
+      photos?: Array<{ value: string }>;
+      username?: string;
+      [key: string]: unknown;
     }
   }
 }
-
-// Export empty object to ensure the file is treated as a module 
-// and the augmentation takes effect.
-export {};

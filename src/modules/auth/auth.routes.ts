@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, RequestHandler } from "express";
 import passport from "passport";
 import { authController } from "./auth.controller";
 import { validate } from "../../shared/middlewares/validate.middleware";
@@ -31,12 +31,7 @@ const router = Router();
  *       200:
  *         description: OTP sent
  */
-router.post(
-  "/register",
-  authLimiter,
-  validate(registerSchema),
-  authController.register,
-);
+router.post("/register", authLimiter, validate(registerSchema), authController.register);
 
 /**
  * @swagger
@@ -59,12 +54,7 @@ router.post(
  *       201:
  *         description: User registered successfully
  */
-router.post(
-  "/verify-email",
-  authLimiter,
-  validate(verifyOtpSchema),
-  authController.verifyEmail,
-);
+router.post("/verify-email", authLimiter, validate(verifyOtpSchema), authController.verifyEmail);
 
 /**
  * @swagger
@@ -84,34 +74,32 @@ router.post(
  */
 router.post("/login", authLimiter, validate(loginSchema), authController.login);
 
-router.post(
-  "/forgot-password",
-  authLimiter,
-  validate(forgotPasswordSchema),
-  authController.forgotPassword,
-);
-router.post(
-  "/reset-password",
-  authLimiter,
-  validate(resetPasswordSchema),
-  authController.resetPassword,
-);
-router.post("/refresh", authController.refreshToken);
+router.post("/forgot-password", authLimiter, validate(forgotPasswordSchema), authController.forgotPassword);
+router.post("/reset-password", authLimiter, validate(resetPasswordSchema), authController.resetPassword);
+router.post("/refresh-token", authController.refreshToken);
 router.post("/logout", authenticate, authController.logout);
 
 // Google Auth
 router.get(
   "/google",
-  passport.authenticate("google", { scope: ["profile", "email"] }),
+  passport.authenticate("google", { scope: ["profile", "email"] }) as unknown as RequestHandler,
 );
 router.get(
   "/google/callback",
-  passport.authenticate("google", { session: false }),
+  passport.authenticate("google", { session: false }) as unknown as RequestHandler,
   authController.googleCallback,
 );
 
 // GitHub Auth (If configured)
-// router.get('/github', passport.authenticate('github', { scope: ['user:email'] }));
-// router.get('/github/callback', ...);
+router.get(
+  "/github",
+  passport.authenticate("github", { scope: ["user:email"] }) as RequestHandler,
+);
+
+router.get(
+  "/github/callback",
+  passport.authenticate("github", { session: false }) as RequestHandler,
+  authController.githubCallback,
+);
 
 export const authRoutes = router;

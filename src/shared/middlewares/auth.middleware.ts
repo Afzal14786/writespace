@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import { AppError } from "../utils/app.error";
 import { HTTP_STATUS } from "../constants/http-codes";
+import { IJwtPayload } from "../../modules/auth/interface/auth.interface";
 import env from "../../config/env";
 
 export const authenticate = async (
@@ -21,13 +22,13 @@ export const authenticate = async (
 
     const token = authHeader.split(" ")[1];
 
-    const decoded = jwt.verify(token, env.JWT_ACCESS_SECRET) as {
-      id: string;
-      role?: string;
-      [key: string]: any;
+    const decoded = jwt.verify(token, env.JWT_ACCESS_SECRET) as IJwtPayload;
+    
+    req.user = {
+      id: decoded.id,
+      role: decoded.role
     };
-
-    req.user = decoded;
+    
     next();
   } catch (error) {
     if (error instanceof jwt.JsonWebTokenError) {

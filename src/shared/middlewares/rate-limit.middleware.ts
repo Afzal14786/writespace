@@ -1,20 +1,27 @@
 import rateLimit from "express-rate-limit";
+import RedisStore from "rate-limit-redis";
+import { client as redisClient } from "../../config/redis";
+
+const store = new RedisStore({
+  sendCommand: (...args: string[]) => redisClient.sendCommand(args),
+});
 
 export const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
-  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
-  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+  store, // SCALABILITY FIX: Use Redis
+  windowMs: 15 * 60 * 1000, 
+  max: 100, 
+  standardHeaders: true, 
+  legacyHeaders: false, 
   message: {
     success: false,
-    message:
-      "Too many requests from this IP, please try again after 15 minutes",
+    message: "Too many requests from this IP, please try again after 15 minutes",
   },
 });
 
 export const authLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 10, // Limit each IP to 10 login requests per hour
+  store, // SCALABILITY FIX: Use Redis
+  windowMs: 60 * 60 * 1000, 
+  max: 20, // INCREASED slightly: 10 is too strict if multiple legit users share an office/college WiFi (NAT IP)
   message: {
     success: false,
     message: "Too many login attempts, please try again after an hour",

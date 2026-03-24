@@ -19,10 +19,11 @@ const REFRESH_COOKIE_OPTIONS = {
   maxAge: 7 * 24 * 60 * 60 * 1000, // 7 Days
 };
 
+type EmptyParams = Record<string, never>;
+
 export class AuthController {
-  // 1. Initiate Register
   public async register(
-    req: Request<{}, {}, RegisterInput>,
+    req: Request<EmptyParams, unknown, RegisterInput>,
     res: Response,
     next: NextFunction,
   ) {
@@ -36,7 +37,7 @@ export class AuthController {
 
   // 2. Verify OTP & Create User
   public async verifyEmail(
-    req: Request<{}, {}, VerifyOtpInput>,
+    req: Request<EmptyParams, unknown, VerifyOtpInput>,
     res: Response,
     next: NextFunction,
   ) {
@@ -58,14 +59,12 @@ export class AuthController {
 
   // 3. Login
   public async login(
-    req: Request<{}, {}, LoginInput>,
+    req: Request<EmptyParams, unknown, LoginInput>,
     res: Response,
     next: NextFunction,
   ) {
     try {
       const ip = req.ip || "Unknown IP";
-      // Note: In Express `req.ip` might need trust proxy settings if behind Nginx
-
       const { user, accessToken, refreshToken } = await authService.login(
         req.body,
         ip,
@@ -76,6 +75,7 @@ export class AuthController {
       new ApiResponse(res, HTTP_STATUS.OK, "Login successful", {
         user,
         accessToken,
+        refreshToken,
       }).send();
     } catch (error) {
       next(error);
@@ -85,7 +85,12 @@ export class AuthController {
   // 4. Refresh Token
   public async refreshToken(req: Request, res: Response, next: NextFunction) {
     try {
-      const refreshToken = req.cookies.refreshToken;
+      // error says: Unsafe member access .refreshToken on an `any` value.
+      const cookies = req.cookies as Record<string, string> | undefined;
+      const body = req.body as Record<string, unknown> | undefined;
+
+      const refreshToken = cookies?.refreshToken || (body?.refreshToken as string | undefined);
+
       if (!refreshToken) {
         new ApiResponse(
           res,
@@ -96,10 +101,13 @@ export class AuthController {
         return;
       }
 
+      // error says: Unsafe argument of type `any` assigned to a parameter of type `string`.
       const tokens = await authService.refreshToken(refreshToken);
       res.cookie("refreshToken", tokens.refreshToken, REFRESH_COOKIE_OPTIONS);
+
       new ApiResponse(res, HTTP_STATUS.OK, "Token refreshed", {
         accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken
       }).send();
     } catch (error) {
       next(error);
@@ -109,12 +117,13 @@ export class AuthController {
   // 5. Logout
   public async logout(req: Request, res: Response, next: NextFunction) {
     try {
-      const refreshToken = req.cookies.refreshToken;
-      // Assuming we have middleware to attach user to req or token decoding
-      // Ideally logout should allow invalidating specific token, but usually we just clear cookie
+      const cookies = req.cookies as Record<string, string> | undefined;
+      const body = req.body as Record<string, unknown> | undefined;
+      
+      const refreshToken = cookies?.refreshToken || (body?.refreshToken as string | undefined);
 
-      if (req.user?.id) {
-        await authService.logout(req.user.id);
+      if (req.user?.id && refreshToken) {
+        await authService.logout(req.user.id, refreshToken);
       }
 
       res.clearCookie("refreshToken");
@@ -130,7 +139,7 @@ export class AuthController {
   }
 
   public async forgotPassword(
-    req: Request<{}, {}, ForgotPasswordInput>,
+    req: Request<EmptyParams, unknown, ForgotPasswordInput>,
     res: Response,
     next: NextFunction,
   ) {
@@ -143,7 +152,7 @@ export class AuthController {
   }
 
   public async resetPassword(
-    req: Request<{}, {}, ResetPasswordInput>,
+    req: Request<EmptyParams, unknown, ResetPasswordInput>,
     res: Response,
     next: NextFunction,
   ) {
@@ -159,7 +168,7 @@ export class AuthController {
   // 6. Google Callback
   public async googleCallback(req: Request, res: Response, next: NextFunction) {
     try {
-      const driverUser: any = req.user; // Passport attaches profile here
+      const driverUser = req.user;
       if (!driverUser) {
         res.redirect(`${env.CLIENT_URL}/auth/failed`);
         return;
@@ -168,9 +177,9 @@ export class AuthController {
       const profile = {
         provider: "google" as const,
         providerId: driverUser.id,
-        email: driverUser.emails[0].value,
-        displayName: driverUser.displayName,
-        picture: driverUser.photos[0].value,
+        email: driverUser.emails?.[0]?.value || "",
+        displayName: driverUser.displayName || "Unknown User",
+        picture: driverUser.photos?.[0]?.value,
       };
 
       const { accessToken, refreshToken } =
@@ -183,6 +192,31 @@ export class AuthController {
       // 2. Redirect with Access Token (or a temporary code)
       // Ideally avoid tokens in URL, but for simple OAuth it's common.
       // Better: Redirect to a frontend page that calls /refresh to get the token.
+      res.redirect(`${env.CLIENT_URL}/auth/success?token=${accessToken}`);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  public async githubCallback(req: Request, res: Response, next: NextFunction) {
+    try {
+      const driverUser = req.user;
+      if (!driverUser) {
+        res.redirect(`${env.CLIENT_URL}/auth/failed`);
+        return;
+      }
+
+      const profile = {
+        provider: "github" as const,
+        providerId: driverUser.id,
+        email: driverUser.emails?.[0]?.value || "", 
+        displayName: driverUser.displayName || driverUser.username || "GitHub User", 
+        picture: driverUser.photos?.[0]?.value,
+      };
+
+      const { accessToken, refreshToken } = await authService.githubAuth(profile);
+
+      res.cookie("refreshToken", refreshToken, REFRESH_COOKIE_OPTIONS);
       res.redirect(`${env.CLIENT_URL}/auth/success?token=${accessToken}`);
     } catch (error) {
       next(error);
