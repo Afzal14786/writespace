@@ -3,6 +3,8 @@ import { postsController } from "./posts.controller";
 import { authenticate } from "../../shared/middlewares/auth.middleware";
 import { upload } from "../../shared/middlewares/upload.middleware";
 import { validate } from "../../shared/middlewares/validate.middleware";
+// 🔥 IMPORT THE NEW GLOBAL MIDDLEWARE
+import { parseFormDataJson } from "../../shared/middlewares/parse-form-data.middleware"; 
 import { CreatePostSchema } from "./dtos/create-post.dto";
 
 const router = Router();
@@ -35,7 +37,7 @@ const router = Router();
  *       200:
  *         description: List of posts
  */
-router.get("/", postsController.getPosts as RequestHandler);
+router.get("/", authenticate as RequestHandler, postsController.getPosts as RequestHandler);
 
 /**
  * @swagger
@@ -53,7 +55,7 @@ router.get("/", postsController.getPosts as RequestHandler);
  *       200:
  *         description: Post details
  */
-router.get("/:id", postsController.getPost as RequestHandler);
+router.get("/:id", authenticate as RequestHandler, postsController.getPost as RequestHandler);
 
 /**
  * @swagger
@@ -90,6 +92,7 @@ router.post(
   "/",
   authenticate as RequestHandler,
   upload.single("banner"),
+  parseFormDataJson as RequestHandler,
   validate(CreatePostSchema) as RequestHandler,
   postsController.createPost as RequestHandler,
 );

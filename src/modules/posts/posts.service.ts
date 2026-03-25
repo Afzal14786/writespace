@@ -17,15 +17,19 @@ class PostService {
   public async createPost(
     authorId: string,
     data: CreatePostInput & { media?: string[], codeSnippets?: CodeSnippetSchema[] }, 
-  ): Promise<Post> {
+  ): Promise<ReturnType<typeof this.getPost>> { 
     const cleanContent = this.sanitizeContent(data.content);
     const slug = await this.generateUniqueSlug(data.title);
-    const excerpt = data.subtitle || cleanContent.substring(0, 150) + "...";
+    const excerpt = data.subtitle || cleanContent.substring(0, 150) + "..." || "";
     const readTime = this.calculateReadTime(cleanContent);
 
-    let newPost: Post;
+    let newPostId: string;
 
     await db.transaction(async (tx) => {
+      const mediaValue = data.media && data.media.length > 0 ? data.media : undefined;
+      const tagsValue = data.tags && data.tags.length > 0 ? data.tags : undefined;
+      const codeSnippetsValue = data.codeSnippets && data.codeSnippets.length > 0 ? data.codeSnippets : undefined;
+
       const [created] = await tx
         .insert(posts)
         .values({
@@ -36,18 +40,18 @@ class PostService {
           excerpt,
           authorId,
           readTime,
-          tags: data.tags || [],
-          media: data.media || [],                 
-          codeSnippets: data.codeSnippets || [],   
+          tags: tagsValue,
+          media: mediaValue,                 
+          codeSnippets: codeSnippetsValue,   
           coverImageUrl: data.coverImage?.url,
           coverImageAltText: data.coverImage?.altText,
           coverImageCredit: data.coverImage?.credit,
           status: data.isPublished ? PostStatus.PUBLISHED : PostStatus.DRAFT,
           publishDate: data.isPublished ? new Date() : undefined,
         })
-        .returning();
+        .returning({ id: posts.id });
 
-      newPost = created;
+      newPostId = created.id;
 
       await tx
         .update(users)
@@ -55,15 +59,17 @@ class PostService {
         .where(eq(users.id, authorId));
     });
 
-    return newPost!;
+    // 🔥 PRO FIX: Immediately fetch the fully hydrated post from the DB
+    // This guarantees the 'author' object is perfectly joined and formatted.
+    return await this.getPost(newPostId!, authorId); 
   }
 
   public async getPost(postId: string, requesterId?: string) {
-    // 🔥 FIX: Conditionally construct the select fields to prevent Drizzle SQL crashes
     const selectFields = {
       post: posts,
       authorUsername: users.username,
       authorProfileImage: users.profileImageUrl,
+      authorFullname: users.fullname,
       ...(requesterId ? {
         isLikedByMe: sql<boolean>`exists(select 1 from ${likes} where ${likes.postId} = ${posts.id} and ${likes.userId} = ${requesterId})`.mapWith(Boolean)
       } : {})
@@ -87,10 +93,11 @@ class PostService {
 
     return {
       ...row.post,
-      isLikedByMe: 'isLikedByMe' in row ? !!row.isLikedByMe : false, // Safely mapped in JS
+      isLikedByMe: 'isLikedByMe' in row ? !!row.isLikedByMe : false,
       author: {
         id: row.post.authorId,
         username: row.authorUsername,
+        fullname: row.authorFullname,
         profileImageUrl: row.authorProfileImage,
       },
     };
@@ -98,7 +105,6 @@ class PostService {
 
   // BIG TECH UPGRADE: Replaced 'page' with 'cursor'
   public async getPosts(limit: number, cursor?: string, requesterId?: string) {
-    // 1. Conditionally construct the select fields
     const selectFields = {
       id: posts.id,
       title: posts.title,
@@ -122,20 +128,18 @@ class PostService {
       createdAt: posts.createdAt,
       authorUsername: users.username,
       authorProfileImage: users.profileImageUrl,
+      authorFullname: users.fullname,
       ...(requesterId ? {
         isLikedByMe: sql<boolean>`exists(select 1 from ${likes} where ${likes.postId} = ${posts.id} and ${likes.userId} = ${requesterId})`.mapWith(Boolean)
       } : {})
     };
 
-    // 2. Build the WHERE conditions dynamically
     const conditions = [eq(posts.status, "published")];
     
-    // If the frontend passed a cursor, only fetch posts older than that cursor
     if (cursor) {
       conditions.push(lt(posts.publishDate, new Date(cursor)));
     }
 
-    // 3. Execute the Cursor Query (Notice: No offset() used!)
     const postsResult = await db.select(selectFields)
       .from(posts)
       .leftJoin(users, eq(posts.authorId, users.id))
@@ -143,7 +147,6 @@ class PostService {
       .orderBy(desc(posts.publishDate))
       .limit(limit);
 
-    // 4. Calculate the next cursor based on the last item in the array
     let nextCursor: string | null = null;
     if (postsResult.length === limit) {
       const lastPost = postsResult[postsResult.length - 1];
@@ -153,13 +156,15 @@ class PostService {
     }
 
     const formattedPosts = postsResult.map((row) => {
-      const { authorUsername, authorProfileImage, ...post } = row;
+      const { authorUsername, authorProfileImage, authorFullname, ...post } = row;
+      
       return {
         ...post,
         isLikedByMe: 'isLikedByMe' in row ? !!row.isLikedByMe : false,
         author: {
           id: post.authorId,
           username: authorUsername,
+          fullname: authorFullname,
           profileImageUrl: authorProfileImage,
         },
       };
@@ -167,7 +172,7 @@ class PostService {
 
     return {
       posts: formattedPosts,
-      nextCursor, // Return the cursor instead of 'total'
+      nextCursor, 
     };
   }
 

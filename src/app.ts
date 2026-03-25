@@ -31,7 +31,10 @@ app.use(cookieParser());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(httpLogger);
-
+/**
+ * only wile development
+ */
+app.use("/uploads", express.static("uploads"));
 configurePassport();
 app.use(passport.initialize());
 
