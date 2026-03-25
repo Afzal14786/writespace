@@ -2,6 +2,7 @@ import multer, { FileFilterCallback } from "multer";
 import multerS3 from "multer-s3";
 import { S3Client } from "@aws-sdk/client-s3";
 import path from "path";
+import fs from "fs"; // 🔥 ADDED: Required for checking/creating local directories
 import { Request } from "express";
 import { AppError } from "../utils/app.error";
 import { HTTP_STATUS } from "../constants/http-codes";
@@ -15,10 +16,11 @@ import env from "../../config/env";
 
 // 1. Configure AWS S3 Client using AWS SDK v3
 const s3 = new S3Client({
-  region: env.AWS_REGION,
+  // 🔥 UPDATED: Added fallbacks so the server doesn't crash if env vars are missing during local dev
+  region: env.AWS_REGION || "us-east-1",
   credentials: {
-    accessKeyId: env.AWS_ACCESS_KEY_ID,
-    secretAccessKey: env.AWS_SECRET_ACCESS_KEY,
+    accessKeyId: env.AWS_ACCESS_KEY_ID || "dummy-key",
+    secretAccessKey: env.AWS_SECRET_ACCESS_KEY || "dummy-secret",
   },
 });
 
@@ -56,19 +58,22 @@ const fileFilter = (
  */
 const s3Storage = multerS3({
   s3: s3,
-  bucket: env.AWS_BUCKET_NAME,
+  // 🔥 UPDATED: Added fallback for bucket name
+  bucket: env.AWS_BUCKET_NAME || "dummy-bucket",
   contentType: multerS3.AUTO_CONTENT_TYPE, // Automatically detect and set content-type
   metadata: function (
     req: Request,
     file: Express.Multer.File,
-    cb: (error: any, metadata?: any) => void,
+    // 🔥 UPDATED: Removed 'any' keyword for 100% type safety
+    cb: (error: Error | null, metadata?: Record<string, string>) => void,
   ) {
     cb(null, { fieldName: file.fieldname });
   },
   key: function (
     req: Request,
     file: Express.Multer.File,
-    cb: (error: any, key?: string) => void,
+    // 🔥 UPDATED: Removed 'any' keyword for 100% type safety
+    cb: (error: Error | null, key?: string) => void,
   ) {
     // Folder structure strategy: uploads/users/{userId}/{timestamp}-{sanitizedFilename}
     // Utilizing req.user safely thanks to express.d.ts augmentation
@@ -85,13 +90,35 @@ const s3Storage = multerS3({
   },
 });
 
+// 🔥 ADDED: TEMPORARY LOCAL STORAGE ENGINE
+const localUploadDir = "uploads/";
+if (!fs.existsSync(localUploadDir)) {
+  fs.mkdirSync(localUploadDir, { recursive: true });
+}
+
+const localStorage = multer.diskStorage({
+  // 🔥 ADDED: Fully typed callback parameters (Error | null)
+  destination: function (req: Request, file: Express.Multer.File, cb: (error: Error | null, destination: string) => void) {
+    cb(null, localUploadDir);
+  },
+  filename: function (req: Request, file: Express.Multer.File, cb: (error: Error | null, filename: string) => void) {
+    const userId = req.user?.id || "anonymous";
+    const cleanName = file.originalname
+      .replace(/\s+/g, "-")
+      .replace(/[^a-zA-Z0-9.\-_]/g, "")
+      .toLowerCase();
+    cb(null, `${userId}-${Date.now()}-${cleanName}`);
+  }
+});
+
 /**
  * Exported Multer Instance.
  * Use this middleware in routes to handle 'multipart/form-data'.
  * Example: router.post('/upload', upload.array('images', 5), controller.handleUpload);
  */
 export const upload = multer({
-  storage: s3Storage,
+  // 🔥 UPDATED: Swapped from s3Storage to localStorage temporarily
+  storage: localStorage, 
   limits: {
     fileSize: 10 * 1024 * 1024, // 10MB limit per file
     files: 5, // Limit max number of files per upload to 5 (prevent DoS)

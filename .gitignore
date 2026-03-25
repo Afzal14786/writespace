@@ -71,6 +71,7 @@ jspm_packages/
 dist/
 lib/
 out/
+uploads/
 
 # IDEs and Editors
 .idea/

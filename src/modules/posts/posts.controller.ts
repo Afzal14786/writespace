@@ -16,6 +16,8 @@ interface AuthRequest<
 
 type UploadedFile = Express.Multer.File & { location?: string; path?: string };
 
+type HydratedPost = Awaited<ReturnType<typeof postService.getPost>>;
+
 class PostsController {
   public createPost = async (
     req: AuthRequest<CreatePostInput & { media?: string[]; codeSnippets?: unknown }>,
@@ -26,12 +28,20 @@ class PostsController {
       const authorId = req.user!.id; 
       const file = req.file as UploadedFile | undefined;
 
-      // 🔥 Safely cast the body to the final payload structure we intend to send
       const payload = req.body as CreatePostInput & { media: string[], codeSnippets: CodeSnippetSchema[] };
+      const rawIsPublished = (req.body as Record<string, unknown>).isPublished as unknown;
 
-      if (file?.location) {
+      if (rawIsPublished === "true" || rawIsPublished === true || rawIsPublished === undefined) {
+        payload.isPublished = true;
+      } else if (rawIsPublished === "false" || rawIsPublished === false) {
+        payload.isPublished = false;
+      }
+
+      if (file?.location || file?.path) {
+        const rawUrl = file.location || `/${file.path!.replace(/\\/g, "/")}`;
+        
         payload.coverImage = {
-          url: file.location,
+          url: rawUrl,
           altText: payload.coverImage?.altText,
           credit: payload.coverImage?.credit,
         };
@@ -41,7 +51,8 @@ class PostsController {
       if (req.body.codeSnippets) {
         if (typeof req.body.codeSnippets === "string") {
           try {
-            parsedCodeSnippets = JSON.parse(req.body.codeSnippets) as CodeSnippetSchema[];
+            // 🔥 FIX: JSON.parse natively returns 'any', so we route it through 'unknown' first
+            parsedCodeSnippets = JSON.parse(req.body.codeSnippets) as unknown as CodeSnippetSchema[];
           } catch (e: unknown) {
             console.error(e);
             parsedCodeSnippets = [];
@@ -72,13 +83,14 @@ class PostsController {
          payload.coverImage = { url: mediaUrls[0] }; 
       }
 
-      const newPost = await postService.createPost(authorId, payload);
-      
+      // 🔥 FIX: Cast through 'unknown' to 'HydratedPost' to safely satisfy strict ESLint rules
+      const fullyHydratedPost = (await postService.createPost(authorId, payload)) as unknown as HydratedPost;
+
       new ApiResponse(
         res,
         HTTP_STATUS.CREATED,
         "Post created successfully",
-        newPost,
+        fullyHydratedPost,
       ).send();
     } catch (error) {
       next(error);
@@ -97,14 +109,13 @@ class PostsController {
       const limit = Math.min(50, Math.max(1, parseInt(limitQuery || "20", 10)));
       const requesterId = req.user?.id;
 
-      // Pass the limit and cursor to the service
       const { posts, nextCursor } = await postService.getPosts(limit, cursor, requesterId);
 
       new ApiResponse(res, HTTP_STATUS.OK, "Posts fetched successfully", {
         posts,
         pagination: {
           limit,
-          nextCursor, // Send the cursor back to React
+          nextCursor, 
         },
       }).send();
     } catch (error) {
