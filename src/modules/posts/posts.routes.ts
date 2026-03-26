@@ -3,9 +3,9 @@ import { postsController } from "./posts.controller";
 import { authenticate } from "../../shared/middlewares/auth.middleware";
 import { upload } from "../../shared/middlewares/upload.middleware";
 import { validate } from "../../shared/middlewares/validate.middleware";
-// 🔥 IMPORT THE NEW GLOBAL MIDDLEWARE
 import { parseFormDataJson } from "../../shared/middlewares/parse-form-data.middleware"; 
 import { CreatePostSchema } from "./dtos/create-post.dto";
+import { updatePostSchema } from "./dtos/update-post.dto";
 
 const router = Router();
 
@@ -91,10 +91,13 @@ router.get("/:id", authenticate as RequestHandler, postsController.getPost as Re
 router.post(
   "/",
   authenticate as RequestHandler,
-  upload.single("banner"),
+  upload.fields([
+    { name: "banner", maxCount: 1 },
+    { name: "media", maxCount: 10 }
+  ]),
   parseFormDataJson as RequestHandler,
   validate(CreatePostSchema) as RequestHandler,
-  postsController.createPost as RequestHandler,
+  postsController.createPost as RequestHandler
 );
 
 /**
@@ -126,7 +129,17 @@ router.post(
  *       200:
  *         description: Post updated
  */
-router.put("/:id", authenticate as RequestHandler, postsController.updatePost as RequestHandler);
+router.post(
+  "/",
+  authenticate as RequestHandler,
+  upload.fields([
+    { name: "banner", maxCount: 1 }, 
+    { name: "media", maxCount: 10 }
+  ]),
+  parseFormDataJson as RequestHandler,
+  validate(CreatePostSchema) as RequestHandler,
+  postsController.createPost as RequestHandler,
+);
 
 /**
  * @swagger
@@ -147,6 +160,18 @@ router.put("/:id", authenticate as RequestHandler, postsController.updatePost as
  *         description: Post deleted
  */
 router.delete("/:id", authenticate as RequestHandler, postsController.deletePost as RequestHandler);
+
+router.put(
+  "/:id",
+  authenticate as RequestHandler,
+  upload.fields([
+    { name: "banner", maxCount: 1 },
+    { name: "media", maxCount: 10 }
+  ]),
+  parseFormDataJson as RequestHandler,
+  validate(updatePostSchema) as RequestHandler,
+  postsController.updatePost as RequestHandler
+);
 
 /**
  * @swagger

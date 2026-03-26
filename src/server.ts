@@ -1,6 +1,7 @@
 import app from "./app";
 import { emailWorker } from "./shared/queues/email.worker";
 import { interactionWorker } from "./shared/queues/interaction.worker";
+import { mediaWorker } from "./shared/queues/media.worker";
 import { client as redisClient } from "./config/redis";
 import { pool } from "./db";
 import logger from "./config/logger";
@@ -35,6 +36,13 @@ async function gracefulShutdown(signal: string) {
     logger.info("Interaction worker closed");
   } catch (err) {
     logger.error(`Error closing interaction worker: ${err}`);
+  }
+
+  try {
+    await mediaWorker.close(); 
+    logger.info("Media worker closed");
+  } catch (err) {
+    logger.error(`Error closing media worker: ${err}`);
   }
 
   try {
