@@ -45,8 +45,7 @@ app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/posts", postsRoutes);
 app.use("/api/v1/users", userRoutes);
-app.use("/api/v1", interactionsRoutes);
-
+app.use("/api/v1/interactions", interactionsRoutes);
 app.use(errorHandler);
 
 connectRedis();

@@ -1,7 +1,7 @@
-import { eq, and, desc, sql, count, isNull } from "drizzle-orm";
+import { eq, and, desc, sql, isNull, lt } from "drizzle-orm";
 import { db } from "../../db";
 import { comments, shares, posts, users } from "../../db/schema";
-import { Comment } from "../../db/schema";
+import { commentLikes } from "../../db/schema/comment-likes"; 
 import { AddCommentDto } from "./dtos/add-comment.dto";
 import { AppError } from "../../shared/utils/app.error";
 import { HTTP_STATUS } from "../../shared/constants/http-codes";
@@ -24,7 +24,7 @@ class InteractionsService {
       throw new AppError(HTTP_STATUS.NOT_FOUND, "Post not found");
     }
 
-    let comment: Comment;
+    let newCommentId: string;
     let parentCommentAuthor: string | null = null;
 
     await db.transaction(async (tx) => {
@@ -36,9 +36,9 @@ class InteractionsService {
           authorId: userId,
           parentCommentId: data.parentCommentId || null,
         })
-        .returning();
+        .returning({ id: comments.id });
 
-      comment = created;
+      newCommentId = created.id;
 
       await tx
         .update(posts)
@@ -66,9 +66,7 @@ class InteractionsService {
         relatedId: postId,
         message: "replied to your comment",
       });
-    }
-
-    if (post.authorId !== userId) {
+    } else if (post.authorId !== userId) {
       await addInteractionJob({
         type: NotificationType.COMMENT,
         recipientId: post.authorId,
@@ -78,60 +76,180 @@ class InteractionsService {
       });
     }
 
-    const [commentWithAuthor] = await db
-      .select({
-        comment: comments,
-        authorUsername: users.username,
-        authorProfileImage: users.profileImageUrl,
-      })
-      .from(comments)
-      .leftJoin(users, eq(comments.authorId, users.id))
-      .where(eq(comments.id, comment!.id))
-      .limit(1);
-
-    return {
-      ...commentWithAuthor.comment,
-      author: {
-        username: commentWithAuthor.authorUsername,
-        profileImageUrl: commentWithAuthor.authorProfileImage,
-      },
-    };
+    // Instantly return hydrated comment for optimistic UI
+    return await this.getCommentById(newCommentId!, userId);
   }
 
-  public async getPostComments(
+  // 🔥 1. Fetch Top Level Comments Only (Cursor Pagination)
+  public async getTopLevelComments(
     postId: string,
-    page: number = 1,
     limit: number = 20,
-    parentId: string | null = null,
+    cursor?: string,
+    requesterId?: string
   ) {
-    const offset = (page - 1) * limit;
+    const conditions = [
+      eq(comments.postId, postId),
+      isNull(comments.parentCommentId)
+    ];
 
-    const conditions = parentId
-      ? and(eq(comments.postId, postId), eq(comments.parentCommentId, parentId))
-      : and(eq(comments.postId, postId), isNull(comments.parentCommentId));
+    if (cursor) {
+      conditions.push(lt(comments.createdAt, new Date(cursor)));
+    }
 
     const results = await db
       .select({
-        comment: comments,
-        authorUsername: users.username,
-        authorProfileImage: users.profileImageUrl,
+        id: comments.id,
+        content: comments.content,
+        parentCommentId: comments.parentCommentId,
+        likeCount: comments.likeCount,
+        replyCount: comments.replyCount,
+        isEdited: comments.isEdited,
+        createdAt: comments.createdAt,
+        updatedAt: comments.updatedAt,
+        author: {
+          id: users.id,
+          username: users.username,
+          fullname: users.fullname,
+          profileImageUrl: users.profileImageUrl,
+        },
+        ...(requesterId ? {
+          isLikedByMe: sql<boolean>`exists(select 1 from ${commentLikes} where ${commentLikes.commentId} = ${comments.id} and ${commentLikes.userId} = ${requesterId})`.mapWith(Boolean)
+        } : {})
       })
       .from(comments)
-      .leftJoin(users, eq(comments.authorId, users.id))
-      .where(conditions)
+      .innerJoin(users, eq(comments.authorId, users.id))
+      .where(and(...conditions))
       .orderBy(desc(comments.createdAt))
-      .offset(offset)
       .limit(limit);
 
-    return results.map(
-      ({ comment: c, authorUsername, authorProfileImage }) => ({
-        ...c,
+    let nextCursor: string | null = null;
+    if (results.length === limit) {
+      const lastComment = results[results.length - 1];
+      if (lastComment.createdAt) {
+        nextCursor = lastComment.createdAt.toISOString();
+      }
+    }
+
+    const formattedComments = results.map((row) => ({
+      ...row,
+      isLikedByMe: 'isLikedByMe' in row ? !!row.isLikedByMe : false,
+    }));
+
+    return { comments: formattedComments, nextCursor };
+  }
+
+  // 🔥 2. Fetch Replies On Demand (Lazy Loading)
+  public async getCommentReplies(
+    parentCommentId: string,
+    limit: number = 20,
+    cursor?: string,
+    requesterId?: string
+  ) {
+    const conditions = [
+      eq(comments.parentCommentId, parentCommentId)
+    ];
+
+    if (cursor) {
+      conditions.push(lt(comments.createdAt, new Date(cursor)));
+    }
+
+    const results = await db
+      .select({
+        id: comments.id,
+        content: comments.content,
+        parentCommentId: comments.parentCommentId,
+        likeCount: comments.likeCount,
+        replyCount: comments.replyCount,
+        isEdited: comments.isEdited,
+        createdAt: comments.createdAt,
+        updatedAt: comments.updatedAt,
         author: {
-          username: authorUsername,
-          profileImageUrl: authorProfileImage,
+          id: users.id,
+          username: users.username,
+          fullname: users.fullname,
+          profileImageUrl: users.profileImageUrl,
         },
-      }),
-    );
+        ...(requesterId ? {
+          isLikedByMe: sql<boolean>`exists(select 1 from ${commentLikes} where ${commentLikes.commentId} = ${comments.id} and ${commentLikes.userId} = ${requesterId})`.mapWith(Boolean)
+        } : {})
+      })
+      .from(comments)
+      .innerJoin(users, eq(comments.authorId, users.id))
+      .where(and(...conditions))
+      .orderBy(desc(comments.createdAt)) 
+      .limit(limit);
+
+    let nextCursor: string | null = null;
+    if (results.length === limit) {
+      const lastComment = results[results.length - 1];
+      if (lastComment.createdAt) {
+        nextCursor = lastComment.createdAt.toISOString();
+      }
+    }
+
+    const formattedComments = results.map((row) => ({
+      ...row,
+      isLikedByMe: 'isLikedByMe' in row ? !!row.isLikedByMe : false,
+    }));
+
+    return { replies: formattedComments, nextCursor };
+  }
+
+  private async getCommentById(commentId: string, requesterId?: string) {
+    const [comment] = await db
+      .select({
+        id: comments.id,
+        content: comments.content,
+        parentCommentId: comments.parentCommentId,
+        likeCount: comments.likeCount,
+        replyCount: comments.replyCount,
+        isEdited: comments.isEdited,
+        createdAt: comments.createdAt,
+        updatedAt: comments.updatedAt,
+        author: {
+          id: users.id,
+          username: users.username,
+          fullname: users.fullname,
+          profileImageUrl: users.profileImageUrl,
+        },
+        ...(requesterId ? {
+          isLikedByMe: sql<boolean>`exists(select 1 from ${commentLikes} where ${commentLikes.commentId} = ${comments.id} and ${commentLikes.userId} = ${requesterId})`.mapWith(Boolean)
+        } : {})
+      })
+      .from(comments)
+      .innerJoin(users, eq(comments.authorId, users.id))
+      .where(eq(comments.id, commentId))
+      .limit(1);
+
+    return {
+      ...comment,
+      isLikedByMe: 'isLikedByMe' in comment ? !!comment.isLikedByMe : false,
+    };
+  }
+
+  // 🔥 3. The New Like Comment Logic
+  public async likeComment(commentId: string, userId: string): Promise<{ status: "liked" | "unliked" }> {
+    let resultStatus: "liked" | "unliked";
+
+    await db.transaction(async (tx) => {
+      const [existingLike] = await tx
+        .select()
+        .from(commentLikes)
+        .where(and(eq(commentLikes.commentId, commentId), eq(commentLikes.userId, userId)))
+        .limit(1);
+
+      if (existingLike) {
+        await tx.delete(commentLikes).where(and(eq(commentLikes.commentId, commentId), eq(commentLikes.userId, userId)));
+        await tx.update(comments).set({ likeCount: sql`${comments.likeCount} - 1` }).where(eq(comments.id, commentId));
+        resultStatus = "unliked";
+      } else {
+        await tx.insert(commentLikes).values({ commentId, userId });
+        await tx.update(comments).set({ likeCount: sql`${comments.likeCount} + 1` }).where(eq(comments.id, commentId));
+        resultStatus = "liked";
+      }
+    });
+
+    return { status: resultStatus! };
   }
 
   public async deleteComment(
@@ -150,49 +268,62 @@ class InteractionsService {
     }
 
     if (comment.authorId !== userId && !isAdmin) {
-      throw new AppError(
-        HTTP_STATUS.FORBIDDEN,
-        "Not authorized to delete this comment",
-      );
+      throw new AppError(HTTP_STATUS.FORBIDDEN, "Not authorized to delete this comment");
     }
 
     await db.transaction(async (tx) => {
-      const [replyCountResult] = await tx
-        .select({ total: count() })
-        .from(comments)
-        .where(eq(comments.parentCommentId, commentId));
-
-      const replyCount = replyCountResult.total;
-
-      await tx.delete(comments).where(eq(comments.parentCommentId, commentId));
-
+      // 1. Delete the comment (PostgreSQL ON DELETE CASCADE will automatically delete all deeply nested replies)
       await tx.delete(comments).where(eq(comments.id, commentId));
+      await tx.execute(
+        sql`UPDATE posts SET comment_count = (SELECT COUNT(*) FROM comments WHERE post_id = ${comment.postId}) WHERE id = ${comment.postId}`
+      );
 
-      const totalRemoved = 1 + replyCount;
-      await tx
-        .update(posts)
-        .set({ commentCount: sql`${posts.commentCount} - ${totalRemoved}` })
-        .where(eq(posts.id, comment.postId));
-
+      // 3. Update the direct parent's reply count (if this was a reply)
       if (comment.parentCommentId) {
-        await tx
-          .update(comments)
-          .set({ replyCount: sql`${comments.replyCount} - 1` })
-          .where(eq(comments.id, comment.parentCommentId));
+        await tx.execute(
+          sql`UPDATE comments SET reply_count = (SELECT COUNT(*) FROM comments WHERE parent_comment_id = ${comment.parentCommentId}) WHERE id = ${comment.parentCommentId}`
+        );
       }
     });
   }
 
-  public async logShare(
+  public async updateComment(
     userId: string,
-    postId: string,
-    platform: string,
-  ): Promise<void> {
-    await db.insert(shares).values({
-      userId,
-      postId,
-      platform,
-    });
+    commentId: string,
+    content: string
+  ) {
+    // 1. Find the comment
+    const [comment] = await db
+      .select()
+      .from(comments)
+      .where(eq(comments.id, commentId))
+      .limit(1);
+
+    if (!comment) {
+      throw new AppError(HTTP_STATUS.NOT_FOUND, "Comment not found");
+    }
+
+    // 2. SECURITY CHECK: Ensure the requester is the author
+    if (comment.authorId !== userId) {
+      throw new AppError(
+        HTTP_STATUS.FORBIDDEN,
+        "You are not authorized to edit this comment"
+      );
+    }
+
+    // 3. Update the comment and set isEdited to true
+    await db
+      .update(comments)
+      .set({ content, isEdited: true })
+      .where(eq(comments.id, commentId));
+
+    // 4. Return the fully hydrated comment so the UI updates instantly
+    return await this.getCommentById(commentId, userId);
+  }
+
+  
+  public async logShare(userId: string, postId: string, platform: string): Promise<void> {
+    await db.insert(shares).values({ userId, postId, platform });
   }
 }
 

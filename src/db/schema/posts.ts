@@ -34,36 +34,35 @@ export const posts = pgTable(
     content: text("content").notNull(),
     excerpt: text("excerpt"),
     version: integer("version").default(1).notNull(),
-    // coverImage (flattened)
+    
+    // Cover Image (For Medium-style articles)
     coverImageUrl: text("cover_image_url"),
     coverImageAltText: text("cover_image_alt_text"),
     coverImageCredit: text("cover_image_credit"),
-    coverImageMobileUrl: text("cover_image_mobile_url"),
-    // media
-    audioUrl: text("audio_url"),
-    attachments: text("attachments").array().default([]),    
+    
+    // Media & Code (For LinkedIn-style posts)
     media: text("media").array().default([]), 
     codeSnippets: jsonb("code_snippets").$type<CodeSnippetSchema[]>().default([]), 
 
-    // taxonomy
-    categoryId: text("category_id"),
+    // Taxonomy
     tags: text("tags").array().default([]),
-    seriesId: text("series_id"),
-    seriesOrder: integer("series_order"),
-    // ownership
+    
+    // Ownership
     authorId: uuid("author_id")
       .notNull()
       .references(() => users.id, { onDelete: "restrict" }),
     isPremium: boolean("is_premium").default(false).notNull(),
     status: postStatusEnum("status").default("draft").notNull(),
     publishDate: timestamp("publish_date", { withTimezone: true }),
-    // stats (flattened)
+    
+    // Stats
     viewCount: integer("view_count").default(0).notNull(),
     likeCount: integer("like_count").default(0).notNull(),
     commentCount: integer("comment_count").default(0).notNull(),
     shareCount: integer("share_count").default(0).notNull(),
     readTime: integer("read_time").default(0).notNull(),
-    // timestamps
+    
+    // Timestamps
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),

@@ -1,12 +1,12 @@
 import {
   pgTable,
-  text,
   uuid,
   boolean,
   integer,
   timestamp,
   index,
   varchar,
+  AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { users } from "./users";
 import { posts } from "./posts";
@@ -23,7 +23,7 @@ export const comments = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "restrict" }),
     parentCommentId: uuid("parent_comment_id").references(
-      (): any => comments.id,
+      (): AnyPgColumn => comments.id,
       { onDelete: "cascade" },
     ),
     likeCount: integer("like_count").default(0).notNull(),

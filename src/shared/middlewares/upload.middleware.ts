@@ -120,7 +120,7 @@ export const upload = multer({
   // 🔥 UPDATED: Swapped from s3Storage to localStorage temporarily
   storage: localStorage, 
   limits: {
-    fileSize: 10 * 1024 * 1024, // 10MB limit per file
+    fileSize: 50 * 1024 * 1024, // 50MB limit per file
     files: 5, // Limit max number of files per upload to 5 (prevent DoS)
   },
   fileFilter: fileFilter,
