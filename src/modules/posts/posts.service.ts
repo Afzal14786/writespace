@@ -1,6 +1,6 @@
-import { eq, and, sql, desc, lt, SQL } from "drizzle-orm";
+import { eq, and, sql, desc, lt, SQL, inArray } from "drizzle-orm";
 import { db } from "../../db";
-import { posts, likes, users } from "../../db/schema";
+import { posts, likes, users, follows } from "../../db/schema";
 import { CodeSnippetSchema } from "../../db/schema/posts";
 import { PostStatus } from "./interfaces/post.interface";
 import { CreatePostInput } from "./dtos/create-post.dto";
@@ -14,7 +14,6 @@ import { addInteractionJob } from "../../shared/queues/interaction.queue";
 import { NotificationType } from "../../modules/notification/interface/notification.interface";
 import { addMediaCleanupJob } from "../../shared/queues/media.queue";
 
-// 🔥 We define an interface for the Cover Image so TS knows what to expect
 interface CoverImageData {
   url: string;
   altText?: string;
@@ -27,7 +26,7 @@ class PostService {
     data: CreatePostInput & {
       media?: string[];
       codeSnippets?: CodeSnippetSchema[];
-      coverImage?: CoverImageData; // 🔥 Added explicitly here
+      coverImage?: CoverImageData; 
     },
   ): Promise<Awaited<ReturnType<typeof this.getPost>>> {
     const cleanContent = this.sanitizeContent(data.content);
@@ -57,7 +56,7 @@ class PostService {
           codeSnippets: codeSnippetsValue,
           coverImageUrl: data.coverImage?.url,
           coverImageAltText: data.coverImage?.altText,
-          coverImageCredit: data.coverImage?.credit, // 🔥 Fixed your typo here!
+          coverImageCredit: data.coverImage?.credit, 
           status: data.isPublished ? PostStatus.PUBLISHED : PostStatus.DRAFT,
           publishDate: data.isPublished ? new Date() : undefined,
         })
@@ -115,7 +114,6 @@ class PostService {
     };
   }
 
-  // 🔥 Included authorIdFilter for profile feeds
   public async getPosts(limit: number, cursor?: string, requesterId?: string, authorIdFilter?: string) {
     const selectFields = {
       id: posts.id,
@@ -166,6 +164,30 @@ class PostService {
       .orderBy(desc(posts.publishDate))
       .limit(limit);
 
+    let followedAuthorIds = new Set<string>();
+
+    if (requesterId && postsResult.length > 0) {
+      // 1. Get all unique author IDs from the fetched posts
+      const authorIds = [...new Set(postsResult.map((row) => row.authorId))].filter(Boolean) as string[];
+
+      if (authorIds.length > 0) {
+        // 2. Query the 'follows' table to see which of these authors the user follows
+        const userFollows = await db
+          .select({ followingId: follows.followingId })
+          .from(follows)
+          .where(
+            and(
+              eq(follows.followerId, requesterId),
+              inArray(follows.followingId, authorIds)
+            )
+          );
+
+        // 3. Store the results in an O(1) lookup Set
+        followedAuthorIds = new Set(userFollows.map((f) => f.followingId));
+      }
+    }
+    // ==========================================
+
     let nextCursor: string | null = null;
     if (postsResult.length === limit) {
       const lastPost = postsResult[postsResult.length - 1];
@@ -185,6 +207,7 @@ class PostService {
           username: authorUsername,
           fullname: authorFullname,
           profileImageUrl: authorProfileImage,
+          isFollowingByMe: followedAuthorIds.has(post.authorId),
         },
       };
     });
@@ -201,7 +224,7 @@ class PostService {
     data: Partial<CreatePostInput> & {
       media?: string[];
       codeSnippets?: CodeSnippetSchema[];
-      coverImage?: CoverImageData; // 🔥 Added explicitly here
+      coverImage?: CoverImageData; 
     },
   ): Promise<Awaited<ReturnType<typeof this.getPost>>> {
     const [post] = await db

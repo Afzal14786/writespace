@@ -14,7 +14,12 @@ export const parseFormDataJson = (req: Request, res: Response, next: NextFunctio
     const body = req.body as Record<string, unknown>;
 
     // 3. Define the specific fields we expect to be stringified JSON
-    const jsonFields = ["tags", "codeSnippets"];
+    const jsonFields = [
+      "tags", 
+      "codeSnippets", 
+      "personal_info", 
+      "social_links"
+    ];
 
     jsonFields.forEach((field) => {
       // 4. Narrow the type: If the field exists and is a string, attempt to parse it
