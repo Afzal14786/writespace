@@ -5,13 +5,18 @@ import { comments } from "./comments";
 import { likes } from "./likes";
 import { shares } from "./shares";
 import { notifications } from "./notifications";
+import { follows } from "./follows";
+import { commentLikes } from "./comment-likes"
 
 export const usersRelations = relations(users, ({ many }) => ({
   posts: many(posts),
   comments: many(comments),
   likes: many(likes),
-  shares: many(shares),
-  notifications: many(notifications),
+  commentLikes: many(commentLikes),
+  notificationsReceived: many(notifications, { relationName: "notifications_received" }),
+  notificationsTriggered: many(notifications, { relationName: "notifications_triggered" }),
+  followers: many(follows, { relationName: "user_followers" }), // Users following this user
+  following: many(follows, { relationName: "user_following" }), // Users this user follows
 }));
 
 export const postsRelations = relations(posts, ({ one, many }) => ({
@@ -51,3 +56,17 @@ export const notificationsRelations = relations(notifications, ({ one }) => ({
     references: [users.id],
   }),
 }));
+
+export const followsRelations = relations(follows, ({ one }) => ({
+  follower: one(users, {
+    fields: [follows.followerId],
+    references: [users.id],
+    relationName: "user_following",
+  }),
+  following: one(users, {
+    fields: [follows.followingId],
+    references: [users.id],
+    relationName: "user_followers",
+  }),
+}));
+
