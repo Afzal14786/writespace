@@ -84,6 +84,7 @@ export class UserService {
   public static async updateUser(userId: string, updateData: UpdateProfileDto, mediaPaths?: { profileImage?: string; bannerImage?: string }): Promise<PublicUser> {
     const sanitized: Partial<User> = {};
 
+    // 1. Extract Personal Info
     if (updateData.personal_info) {
       const { fullname, bio, headline, location } = updateData.personal_info;
       if (fullname !== undefined) sanitized.fullname = fullname;
@@ -92,6 +93,25 @@ export class UserService {
       if (location !== undefined) sanitized.location = location; 
     }
 
+    // ==========================================
+    // 🔥 FIX: Extract and map Social Links
+    // ==========================================
+    if (updateData.social_links) {
+      const { website, github, twitter, linkedin, instagram, youtube, facebook, leetcode, geekforgeeks, codeforces } = updateData.social_links;
+      if (website !== undefined) sanitized.website = website;
+      if (github !== undefined) sanitized.github = github;
+      if (twitter !== undefined) sanitized.twitter = twitter;
+      if (linkedin !== undefined) sanitized.linkedin = linkedin;
+      if (instagram !== undefined) sanitized.instagram = instagram;
+      if (youtube !== undefined) sanitized.youtube = youtube;
+      if (facebook !== undefined) sanitized.facebook = facebook;
+      if (leetcode !== undefined) sanitized.leetcode = leetcode;
+      if (geekforgeeks !== undefined) sanitized.geeksforgeeks = geekforgeeks;
+      if (codeforces !== undefined) sanitized.codeforces = codeforces;
+    }
+    // ==========================================
+
+    // 3. Extract Media Paths
     if (mediaPaths?.profileImage) {
       const formattedPath = mediaPaths.profileImage.replace(/\\/g, '/');
       sanitized.profileImageUrl = formattedPath.startsWith('/uploads/') ? formattedPath : `/${formattedPath}`;

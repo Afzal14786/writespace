@@ -40,6 +40,9 @@ export const users = pgTable("users", {
   github: text("github").default(""),
   website: text("website").default(""),
   linkedin: text("linkedin").default(""),
+  leetcode: text("leetcode").default(""),
+  geeksforgeeks: text("geeksforgeeks").default(""),
+  codeforces: text("codeforces").default(""),
   // account_info (flattened)
   totalPosts: integer("total_posts").default(0).notNull(),
   totalReads: integer("total_reads").default(0).notNull(),
