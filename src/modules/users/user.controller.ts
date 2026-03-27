@@ -1,23 +1,23 @@
 import { Request, Response, NextFunction } from "express";
-import { userService } from "./user.service";
+import { UserService } from "./user.service";
 import { ApiResponse } from "../../shared/utils/api-response";
 import { HTTP_STATUS } from "../../shared/constants/http-codes";
 import { AppError } from "../../shared/utils/app.error";
+import type { UpdateProfileDto } from "./dtos/update-profile.dto";
 
-class UserController {
+export class UserController {
   /**
    * GET /api/v1/users/check-username?username=afzal
    */
-  public checkUsername = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  public static async checkUsername(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      // Explicitly cast to string to satisfy TS
       const username = req.query.username as string;
       
       if (!username) {
         throw new AppError(HTTP_STATUS.BAD_REQUEST, "Username query parameter is required");
       }
       
-      const result = await userService.checkUsernameAvailability(username);
+      const result = await UserService.checkUsernameAvailability(username);
       
       new ApiResponse(
         res, 
@@ -28,18 +28,18 @@ class UserController {
     } catch (error) {
       next(error);
     }
-  };
+  }
 
   /**
    * GET /api/v1/users/me
    */
-  public getMe = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  public static async getMe(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       if (!req.user?.id) {
         throw new AppError(HTTP_STATUS.UNAUTHORIZED, "Session expired or invalid.");
       }
       
-      const userRecord = await userService.getMe(req.user.id);
+      const userRecord = await UserService.getMe(req.user.id);
       
       new ApiResponse(
         res, 
@@ -50,20 +50,21 @@ class UserController {
     } catch (error) {
       next(error);
     }
-  };
+  }
 
   /**
    * GET /api/v1/users/profile/:username
    */
-  public getProfile = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  public static async getProfile(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const username = req.params.username;
+      const username = req.params.username as string;
+      const currentUserId = req.user?.id; 
       
       if (!username) {
         throw new AppError(HTTP_STATUS.BAD_REQUEST, "Username parameter is required");
       }
       
-      const publicProfile = await userService.getUserProfile(username as string);
+      const publicProfile = await UserService.getUserProfile(username, currentUserId);
       
       new ApiResponse(
         res, 
@@ -74,12 +75,12 @@ class UserController {
     } catch (error) {
       next(error);
     }
-  };
+  }
 
   /**
    * PUT /api/v1/users/:id
    */
-  public updateProfile = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  public static async updateProfile(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const id = req.params.id as string;
       
@@ -91,10 +92,16 @@ class UserController {
         throw new AppError(HTTP_STATUS.FORBIDDEN, "You do not have permission to update this profile");
       }
       
-      // FIX: Dynamically extract the exact required type from the service signature to cast req.body safely.
-      const updateData = req.body as Parameters<typeof userService.updateUser>[1];
+      const updateData = req.body as UpdateProfileDto;
       
-      const updatedUser = await userService.updateUser(id, updateData);
+      const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+      
+      const mediaPaths = {
+        profileImage: files?.profileImage?.[0]?.path,
+        bannerImage: files?.bannerImage?.[0]?.path,
+      };
+      
+      const updatedUser = await UserService.updateUser(id, updateData, mediaPaths);
       
       new ApiResponse(
         res, 
@@ -105,12 +112,12 @@ class UserController {
     } catch (error) {
       next(error);
     }
-  };
+  }
 
   /**
    * DELETE /api/v1/users/:id
    */
-  public deleteUser = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  public static async deleteUser(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const id = req.params.id as string;
       
@@ -122,7 +129,7 @@ class UserController {
         throw new AppError(HTTP_STATUS.FORBIDDEN, "You do not have permission to delete this account");
       }
 
-      await userService.deleteUser(id);
+      await UserService.deleteUser(id);
       
       new ApiResponse(
         res, 
@@ -133,7 +140,30 @@ class UserController {
     } catch (error) {
       next(error);
     }
-  };
-}
+  }
 
-export const userController = new UserController();
+  /**
+   * POST /api/v1/users/:id/follow
+   */
+  public static async toggleFollow(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user?.id) {
+        throw new AppError(HTTP_STATUS.UNAUTHORIZED, "Authentication required to follow users");
+      }
+
+      const currentUserId = req.user.id;
+      const targetUserId = req.params.id as string;
+
+      const result = await UserService.toggleFollow(currentUserId, targetUserId);
+
+      new ApiResponse(
+        res,
+        HTTP_STATUS.OK,
+        "Follow status updated successfully",
+        result
+      ).send();
+    } catch (error) {
+      next(error);
+    }
+  }
+}

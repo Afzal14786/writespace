@@ -1,32 +1,33 @@
-import { eq } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { db } from "../../db";
-import { users, type User } from "../../db/schema";
+import { users, type User } from "../../db/schema/users";
+import { follows } from "../../db/schema/follows";
 import { AppError } from "../../shared/utils/app.error";
 import { HTTP_STATUS } from "../../shared/constants/http-codes";
-import { type UpdateProfileDto } from "./dtos/update-profile.dto";
-import { type PublicUser } from "./interface/user.interface";
+import type { UpdateProfileDto } from "./dtos/update-profile.dto";
+import type { PublicUser } from "./interface/user.interface";
+import { interactionQueue } from "../../shared/queues/interaction.queue";
+import { NotificationType } from "../notification/interface/notification.interface";
 
 export interface UsernameAvailability {
   available: boolean;
   suggestions?: string[];
 }
 
-class UserService {
-  /**
-   * Helper to strip sensitive fields (password, internal locks)
-   */
-  private toPublicUser(user: User): PublicUser {
+export class UserService {
+  private static toPublicUser(user: User): PublicUser {
     const { passwordHash, loginAttempts, lockUntil, ...publicFields } = user;
+    
+    void passwordHash;
+    void loginAttempts;
+    void lockUntil;
+    
     return publicFields;
   }
 
-  /**
-   * Check if username is taken and generate unique suggestions
-   */
-  public async checkUsernameAvailability(username: string): Promise<UsernameAvailability> {
+  public static async checkUsernameAvailability(username: string): Promise<UsernameAvailability> {
     const normalizedUsername = username.toLowerCase();
     
-    // findFirst is faster than select().limit(1) as it avoids array overhead
     const existing = await db.query.users.findFirst({
       where: eq(users.username, normalizedUsername),
       columns: { id: true }
@@ -47,44 +48,58 @@ class UserService {
     return { available: false, suggestions };
   }
 
-  public async getUserProfile(username: string): Promise<PublicUser> {
+  public static async getUserProfile(username: string, currentUserId?: string): Promise<PublicUser & { isFollowingByMe: boolean }> {
     const user = await db.query.users.findFirst({
       where: eq(users.username, username),
     });
 
     if (!user) throw new AppError(HTTP_STATUS.NOT_FOUND, "User not found");
-    return this.toPublicUser(user);
+
+    let isFollowingByMe = false;
+    if (currentUserId && currentUserId !== user.id) {
+      const [followRecord] = await db
+        .select()
+        .from(follows)
+        .where(and(eq(follows.followerId, currentUserId), eq(follows.followingId, user.id)));
+      
+      if (followRecord) isFollowingByMe = true;
+    }
+
+    // 🔥 FIX 3: We no longer run COUNT() queries. We instantly return the user's built-in counters.
+    return {
+      ...this.toPublicUser(user),
+      isFollowingByMe,
+    };
   }
 
-  public async getMe(userId: string): Promise<PublicUser> {
+  public static async getMe(userId: string): Promise<PublicUser> {
     const user = await db.query.users.findFirst({
       where: eq(users.id, userId),
     });
+    
     if (!user) throw new AppError(HTTP_STATUS.NOT_FOUND, "User session invalid");
     return this.toPublicUser(user);
   }
 
-  public async updateUser(userId: string, updateData: UpdateProfileDto): Promise<PublicUser> {
+  public static async updateUser(userId: string, updateData: UpdateProfileDto, mediaPaths?: { profileImage?: string; bannerImage?: string }): Promise<PublicUser> {
     const sanitized: Partial<User> = {};
 
-    // Strictly map Personal Info (avoids 'any')
     if (updateData.personal_info) {
-      const { fullname, bio, headline } = updateData.personal_info;
+      const { fullname, bio, headline, location } = updateData.personal_info;
       if (fullname !== undefined) sanitized.fullname = fullname;
       if (bio !== undefined) sanitized.bio = bio;
       if (headline !== undefined) sanitized.headline = headline;
+      if (location !== undefined) sanitized.location = location; 
     }
 
-    // Strictly map Social Links
-    if (updateData.social_links) {
-      const { twitter, github, website, linkedin, instagram, facebook, youtube } = updateData.social_links;
-      if (twitter !== undefined) sanitized.twitter = twitter;
-      if (github !== undefined) sanitized.github = github;
-      if (website !== undefined) sanitized.website = website;
-      if (linkedin !== undefined) sanitized.linkedin = linkedin;
-      if (instagram !== undefined) sanitized.instagram = instagram;
-      if (facebook !== undefined) sanitized.facebook = facebook;
-      if (youtube !== undefined) sanitized.youtube = youtube;
+    if (mediaPaths?.profileImage) {
+      const formattedPath = mediaPaths.profileImage.replace(/\\/g, '/');
+      sanitized.profileImageUrl = formattedPath.startsWith('/uploads/') ? formattedPath : `/${formattedPath}`;
+    }
+
+    if (mediaPaths?.bannerImage) {
+      const formattedPath = mediaPaths.bannerImage.replace(/\\/g, '/');
+      sanitized.bannerImageUrl = formattedPath.startsWith('/uploads/') ? formattedPath : `/${formattedPath}`;
     }
 
     if (Object.keys(sanitized).length === 0) {
@@ -100,7 +115,7 @@ class UserService {
     return this.toPublicUser(updated);
   }
 
-  public async deleteUser(userId: string): Promise<void> {
+  public static async deleteUser(userId: string): Promise<void> {
     const [user] = await db.update(users)
       .set({ status: "suspended" })
       .where(eq(users.id, userId))
@@ -108,6 +123,71 @@ class UserService {
 
     if (!user) throw new AppError(HTTP_STATUS.NOT_FOUND, "User not found");
   }
-}
 
-export const userService = new UserService();
+  public static async toggleFollow(currentUserId: string, targetUserId: string): Promise<{ status: "followed" | "unfollowed" }> {
+    if (currentUserId === targetUserId) {
+      throw new AppError(HTTP_STATUS.BAD_REQUEST, "You cannot follow yourself");
+    }
+
+    const targetUser = await db.query.users.findFirst({
+      where: eq(users.id, targetUserId),
+    });
+
+    if (!targetUser) {
+      throw new AppError(HTTP_STATUS.NOT_FOUND, "User not found");
+    }
+
+    const existingFollow = await db.query.follows.findFirst({
+      where: and(
+        eq(follows.followerId, currentUserId),
+        eq(follows.followingId, targetUserId)
+      ),
+    });
+
+    if (existingFollow) {
+      await db.transaction(async (tx) => {
+        await tx.delete(follows).where(
+          and(
+            eq(follows.followerId, currentUserId),
+            eq(follows.followingId, targetUserId)
+          )
+        );
+        
+        await tx.update(users)
+          .set({ totalFollowers: sql`GREATEST(${users.totalFollowers} - 1, 0)` })
+          .where(eq(users.id, targetUserId));
+          
+        await tx.update(users)
+          .set({ totalFollowing: sql`GREATEST(${users.totalFollowing} - 1, 0)` })
+          .where(eq(users.id, currentUserId));
+      });
+
+      return { status: "unfollowed" };
+      
+    } else {
+      await db.transaction(async (tx) => {
+        await tx.insert(follows).values({
+          followerId: currentUserId,
+          followingId: targetUserId,
+        });
+
+        await tx.update(users)
+          .set({ totalFollowers: sql`${users.totalFollowers} + 1` })
+          .where(eq(users.id, targetUserId));
+          
+        await tx.update(users)
+          .set({ totalFollowing: sql`${users.totalFollowing} + 1` })
+          .where(eq(users.id, currentUserId));
+      });
+
+      await interactionQueue.add("processInteraction", {
+        type: NotificationType.FOLLOW,
+        actorId: currentUserId,
+        recipientId: targetUserId,
+        message: "started following you"
+      });
+
+      return { status: "followed" };
+    }
+  }
+}
