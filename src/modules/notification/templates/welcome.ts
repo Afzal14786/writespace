@@ -1,12 +1,15 @@
 import { baseEmailLayout } from "./layout";
 
 export const welcomeTemplate = (data: { username: string; ctaLink: string }) => {
-  const content = `
+  const htmlContent = `
     <div style="text-align: center;">
       <h2 style="color: #0f172a; margin-bottom: 16px;">Welcome to Writespace, ${data.username}!</h2>
       <p style="color: #334155; margin-bottom: 24px;">We're thrilled to have you on board. Start exploring, writing, and connecting with other developers today.</p>
       <a href="${data.ctaLink}" class="button">Complete Your Profile</a>
     </div>
   `;
-  return baseEmailLayout(content, "Welcome to Writespace!");
+
+  const textContent = `Welcome to Writespace, ${data.username}!\n\nWe're thrilled to have you on board. Start exploring, writing, and connecting with other developers today.\n\nComplete Your Profile: ${data.ctaLink}\n\n© ${new Date().getFullYear()} Writespace. All rights reserved.`;
+
+  return { html: baseEmailLayout(htmlContent, "Welcome to Writespace!"), text: textContent };
 };

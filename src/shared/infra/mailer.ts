@@ -7,6 +7,7 @@ interface MailOptions {
   to: string;
   subject: string;
   html: string;
+  text: string;
 }
 
 /**
@@ -35,10 +36,11 @@ class Mailer {
    */
   public async sendEmail(options: MailOptions): Promise<void> {
     await this.transporter.sendMail({
-      from: `WriteSpace <${env.SMTP_USER}>`,
+      from: `Writespace <${env.SMTP_USER}>`,
       to: options.to,
       subject: options.subject,
       html: options.html,
+      text: options.text,
     });
   }
 }

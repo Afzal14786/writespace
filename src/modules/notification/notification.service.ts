@@ -46,27 +46,29 @@ interface INotificationService {
     postId: string,
   ): Promise<void>;
 
-  // REST API METHODS
-  getUserNotifications(userId: string, limit?: number, offset?: number): Promise<{ notifications: unknown[]; unreadCount: number }>;
+  getUserNotifications(
+    userId: string,
+    limit?: number,
+    offset?: number,
+  ): Promise<{ notifications: unknown[]; unreadCount: number }>;
   markAsRead(notificationIds: number[], userId: string): Promise<void>;
   markAllAsRead(userId: string): Promise<void>;
 }
 
 class NotificationService implements INotificationService {
+  // 🔥 FIX: Destructure BOTH html and text from every template
+
   public async sendWelcomeEmail(
     to: string,
     username: string,
     userId: string,
   ): Promise<void> {
-    const html = welcomeTemplate({
+    const { html, text } = welcomeTemplate({
       username,
       ctaLink: `${process.env.CLIENT_URL || "#"}/onboarding`,
     });
-    await addEmailJob({
-      to,
-      subject: "Welcome to Writespace!",
-      html,
-    });
+
+    await addEmailJob({ to, subject: "Welcome to Writespace!", html, text });
 
     await this.createInAppNotification(
       userId,
@@ -80,12 +82,11 @@ class NotificationService implements INotificationService {
     username: string,
     resetUrl: string,
   ): Promise<void> {
-    const html = passwordResetTemplate({ username, resetLink: resetUrl });
-    await addEmailJob({
-      to,
-      subject: "Reset Your Password",
-      html,
+    const { html, text } = passwordResetTemplate({
+      username,
+      resetLink: resetUrl,
     });
+    await addEmailJob({ to, subject: "Reset Your Password", html, text });
   }
 
   public async sendLoginAlert(
@@ -95,24 +96,20 @@ class NotificationService implements INotificationService {
     _userId: string,
   ): Promise<void> {
     const time = new Date().toLocaleString();
-    const html = loginAlertTemplate({
+    const { html, text } = loginAlertTemplate({
       username,
       time,
       ip,
       secureAccountLink: `${process.env.CLIENT_URL}/settings/security`,
     });
-    await addEmailJob({
-      to,
-      subject: "New Login Detected",
-      html,
-    });
+    await addEmailJob({ to, subject: "New Login Detected", html, text });
   }
 
   public async sendPasswordUpdateEmail(
     to: string,
     username: string,
   ): Promise<void> {
-    const html = passwordUpdateTemplate({
+    const { html, text } = passwordUpdateTemplate({
       username,
       contactSupportLink: `${process.env.CLIENT_URL}/contact`,
     });
@@ -120,6 +117,7 @@ class NotificationService implements INotificationService {
       to,
       subject: "Password Updated Successfully",
       html,
+      text,
     });
   }
 
@@ -127,7 +125,7 @@ class NotificationService implements INotificationService {
     to: string,
     username: string,
   ): Promise<void> {
-    const html = profileUpdateTemplate({
+    const { html, text } = profileUpdateTemplate({
       username,
       profileLink: `${process.env.CLIENT_URL}/profile`,
     });
@@ -135,16 +133,13 @@ class NotificationService implements INotificationService {
       to,
       subject: "Profile Information Updated",
       html,
+      text,
     });
   }
 
   public async sendOtpEmail(to: string, otp: string): Promise<void> {
-    const html = otpVerifyTemplate({ email: to, otp });
-    await addEmailJob({
-      to,
-      subject: "Verify Your Account - OTP",
-      html,
-    });
+    const { html, text } = otpVerifyTemplate({ email: to, otp });
+    await addEmailJob({ to, subject: "Verify Your Account - OTP", html, text });
   }
 
   public async sendLikeNotification(
@@ -217,7 +212,11 @@ class NotificationService implements INotificationService {
     });
   }
 
-  public async getUserNotifications(userId: string, limit: number = 20, offset: number = 0) {
+  public async getUserNotifications(
+    userId: string,
+    limit: number = 20,
+    offset: number = 0,
+  ) {
     const userNotifications = await db
       .select()
       .from(notifications)
@@ -229,15 +228,23 @@ class NotificationService implements INotificationService {
     const [unreadCountResult] = await db
       .select({ count: sql<number>`count(*)` })
       .from(notifications)
-      .where(and(eq(notifications.recipientId, userId), eq(notifications.isRead, false)));
+      .where(
+        and(
+          eq(notifications.recipientId, userId),
+          eq(notifications.isRead, false),
+        ),
+      );
 
     return {
       notifications: userNotifications,
-      unreadCount: Number(unreadCountResult?.count || 0)
+      unreadCount: Number(unreadCountResult?.count || 0),
     };
   }
 
-  public async markAsRead(notificationIds: number[], userId: string): Promise<void> {
+  public async markAsRead(
+    notificationIds: number[],
+    userId: string,
+  ): Promise<void> {
     if (!notificationIds || notificationIds.length === 0) return;
 
     await db
@@ -246,8 +253,8 @@ class NotificationService implements INotificationService {
       .where(
         and(
           inArray(notifications.id, notificationIds),
-          eq(notifications.recipientId, userId) 
-        )
+          eq(notifications.recipientId, userId),
+        ),
       );
   }
 

@@ -1,11 +1,11 @@
 import { Worker } from "bullmq";
 import { mailer } from "../infra/mailer";
 import env from "../../config/env";
-import { IEmailJob } from "../../modules/notification/interface/email.interface";
+import { IEmailPayload } from "../../modules/notification/interface/email.interface";
 import logger from "../../config/logger";
 
 // 1. Create the Worker instance
-export const emailWorker = new Worker<IEmailJob>(
+export const emailWorker = new Worker<IEmailPayload>(
   "email-queue",
   async (job) => {
     // Check for stale OTP jobs (> 1 minute old)
@@ -25,6 +25,7 @@ export const emailWorker = new Worker<IEmailJob>(
       to: job.data.to,
       subject: job.data.subject,
       html: job.data.html,
+      text: job.data.text,
     });
   },
   {
@@ -32,7 +33,7 @@ export const emailWorker = new Worker<IEmailJob>(
       url: env.REDIS_URL,
       password: env.REDIS_PASSWORD,
     },
-    concurrency: 5, // Process 5 emails in parallel
+    concurrency: 5,
   },
 );
 

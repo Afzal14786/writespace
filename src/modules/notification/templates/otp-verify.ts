@@ -1,7 +1,7 @@
 import { baseEmailLayout } from "./layout";
 
 export const otpVerifyTemplate = (data: { email: string; otp: string }) => {
-  const content = `
+  const htmlContent = `
     <div style="text-align: center;">
       <h2 style="color: #0f172a; margin-bottom: 16px;">Verify Your Email</h2>
       <p style="margin-bottom: 24px;">Please use the verification code below to confirm your Writespace account: <br/><strong>${data.email}</strong></p>
@@ -11,5 +11,8 @@ export const otpVerifyTemplate = (data: { email: string; otp: string }) => {
       <p style="font-size: 14px; color: #64748b; margin-top: 24px;">This code expires in 10 minutes.</p>
     </div>
   `;
-  return baseEmailLayout(content, "Verify Your Writespace Account");
+
+  const textContent = `Verify Your Email\n\nPlease use the verification code below to confirm your Writespace account: ${data.email}\n\nVerification Code: ${data.otp}\n\nThis code expires in 10 minutes. If you didn't request this, you can ignore this email.`;
+
+  return { html: baseEmailLayout(htmlContent, "Verify Your Writespace Account"), text: textContent };
 };

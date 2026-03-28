@@ -1,7 +1,7 @@
 import { baseEmailLayout } from "./layout";
 
 export const loginAlertTemplate = (data: { username: string; time: string; ip: string; secureAccountLink: string }) => {
-  const content = `
+  const htmlContent = `
     <div>
       <h2 style="color: #0f172a; margin-bottom: 16px;">New Login Detected</h2>
       <p>Hi ${data.username},</p>
@@ -16,5 +16,8 @@ export const loginAlertTemplate = (data: { username: string; time: string; ip: s
       <a href="${data.secureAccountLink}" class="button">Secure Account</a>
     </div>
   `;
-  return baseEmailLayout(content, "New Login Alert - Writespace");
+
+  const textContent = `New Login Detected\n\nHi ${data.username},\n\nWe noticed a recent login to your Writespace account with the following details:\n- Time: ${data.time}\n- IP Address: ${data.ip}\n\nIf this was you, no further action is needed. If you don't recognize this activity, please secure your account immediately:\n${data.secureAccountLink}`;
+
+  return { html: baseEmailLayout(htmlContent, "New Login Alert - Writespace"), text: textContent };
 };
