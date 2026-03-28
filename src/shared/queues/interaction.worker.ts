@@ -22,16 +22,16 @@ export const interactionWorker = new Worker<IInteractionJob>(
 
       if (actor) {
         const displayName = actor.fullname || actor.username;
-        // Transforms "liked your post." into "John Doe liked your post."
         finalMessage = `${displayName} ${message}`; 
       }
     }
 
     await db.insert(notifications).values({
       recipientId,
+      actorId: actorId || null,      // MUST BE ADDED
       type,
       message: finalMessage,
-      relatedId,
+      relatedId: relatedId || null,  // MUST FALLBACK TO NULL
     });
   },
   {

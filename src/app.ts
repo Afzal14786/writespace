@@ -8,6 +8,7 @@ import { postsRoutes } from "./modules/posts/posts.routes";
 import { authRoutes } from "./modules/auth/auth.routes";
 import { userRoutes } from "./modules/users/user.routes";
 import { interactionsRoutes } from "./modules/interactions/interactions.routes";
+import { notificationRoutes } from "./modules/notification/notification.routes";
 import httpLogger from "./shared/middlewares/httpLogger";
 import helmet from "helmet";
 import cors from "cors";
@@ -38,14 +39,15 @@ app.use("/uploads", express.static("uploads"));
 configurePassport();
 app.use(passport.initialize());
 
-app.use("/api/v1", apiLimiter);
+// app.use("/api/v1", apiLimiter);
 
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
-app.use("/api/v1/auth", authRoutes);
+app.use("/api/v1/auth", apiLimiter, authRoutes);
 app.use("/api/v1/posts", postsRoutes);
 app.use("/api/v1/users", userRoutes);
 app.use("/api/v1/interactions", interactionsRoutes);
+app.use("/api/v1/notifications", notificationRoutes);
 app.use(errorHandler);
 
 connectRedis();
