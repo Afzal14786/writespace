@@ -33,7 +33,7 @@ export const UpdateProfileSchema = z.object({
         youtube: z.string().url("Invalid youtube URL").or(z.literal("")).optional(),
         facebook: z.string().url("Invalid facebook URL").or(z.literal("")).optional(),
         leetcode: z.string().url("Invalid leetcode URL").or(z.literal("")).optional(),
-        geekforgeeks: z.string().url("Invalid geekforgeeks URL").or(z.literal("")).optional(),
+        geeksforgeeks: z.string().url("Invalid geeksforgeeks URL").or(z.literal("")).optional(),
         codeforces: z.string().url("Invalid codeforces URL").or(z.literal("")).optional(),
       })
       .optional(),

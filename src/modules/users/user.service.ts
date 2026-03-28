@@ -108,7 +108,7 @@ export class UserService {
 
     // 2. Extract Social Links
     if (updateData.social_links) {
-      const { website, github, twitter, linkedin, instagram, youtube, facebook, leetcode, geekforgeeks, codeforces } = updateData.social_links;
+      const { website, github, twitter, linkedin, instagram, youtube, facebook, leetcode, geeksforgeeks, codeforces } = updateData.social_links;
       if (website !== undefined) sanitized.website = website;
       if (github !== undefined) sanitized.github = github;
       if (twitter !== undefined) sanitized.twitter = twitter;
@@ -117,7 +117,7 @@ export class UserService {
       if (youtube !== undefined) sanitized.youtube = youtube;
       if (facebook !== undefined) sanitized.facebook = facebook;
       if (leetcode !== undefined) sanitized.leetcode = leetcode;
-      if (geekforgeeks !== undefined) sanitized.geeksforgeeks = geekforgeeks;
+      if (geeksforgeeks !== undefined) sanitized.geeksforgeeks = geeksforgeeks;
       if (codeforces !== undefined) sanitized.codeforces = codeforces;
     }
 
