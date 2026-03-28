@@ -82,30 +82,6 @@ router.post("/login", loginLimiter, validate(loginSchema), authController.login)
 router.post("/forgot-password", emailActionLimiter, authenticate, validate(forgotPasswordSchema), authController.forgotPassword);
 router.post("/reset-password", emailActionLimiter, validate(resetPasswordSchema), authController.resetPassword);
 
-/**
- * @swagger
- * /api/v1/auth/update-password:
- * put:
- * summary: Update user password
- * tags: [Auth]
- * security:
- * - bearerAuth: []
- * requestBody:
- * required: true
- * content:
- * application/json:
- * schema:
- * type: object
- * properties:
- * currentPassword:
- * type: string
- * newPassword:
- * type: string
- * responses:
- * 200:
- * description: Password updated successfully
- */
-
 router.put(
   "/update-password",
   authenticate,
