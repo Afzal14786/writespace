@@ -10,6 +10,7 @@ import { addInteractionJob } from "../../shared/queues/interaction.queue";
 
 import { db } from "../../db";
 import { notifications } from "../../db/schema/notifications";
+import { users } from "../../db/schema/users";
 import { eq, desc, and, inArray, sql } from "drizzle-orm";
 
 interface INotificationService {
@@ -56,8 +57,6 @@ interface INotificationService {
 }
 
 class NotificationService implements INotificationService {
-  // 🔥 FIX: Destructure BOTH html and text from every template
-
   public async sendWelcomeEmail(
     to: string,
     username: string,
@@ -153,6 +152,7 @@ class NotificationService implements INotificationService {
       NotificationType.LIKE,
       "liked your post.",
       postId,
+      actorId
     );
   }
 
@@ -168,6 +168,7 @@ class NotificationService implements INotificationService {
       NotificationType.COMMENT,
       `commented: "${commentPreview}"`,
       postId,
+      actorId
     );
   }
 
@@ -181,6 +182,7 @@ class NotificationService implements INotificationService {
       NotificationType.FOLLOW,
       "started following you.",
       actorId,
+      actorId
     );
   }
 
@@ -195,6 +197,7 @@ class NotificationService implements INotificationService {
       NotificationType.SHARE,
       "shared your post.",
       postId,
+      actorId
     );
   }
 
@@ -203,12 +206,14 @@ class NotificationService implements INotificationService {
     type: NotificationType,
     message: string,
     relatedId?: string,
+    actorId?: string
   ): Promise<void> {
     await addInteractionJob({
       recipientId: recipient,
       type,
       message,
       relatedId,
+      actorId
     });
   }
 
@@ -217,13 +222,42 @@ class NotificationService implements INotificationService {
     limit: number = 20,
     offset: number = 0,
   ) {
-    const userNotifications = await db
-      .select()
+    const rawNotifications = await db
+      .select({
+        id: notifications.id,
+        type: notifications.type,
+        message: notifications.message,
+        relatedId: notifications.relatedId,
+        isRead: notifications.isRead,
+        createdAt: notifications.createdAt,
+        actorId: users.id,
+        actorUsername: users.username,
+        actorFullname: users.fullname,
+        actorProfileImageUrl: users.profileImageUrl,
+      })
       .from(notifications)
+      .leftJoin(users, eq(notifications.actorId, users.id))
       .where(eq(notifications.recipientId, userId))
       .orderBy(desc(notifications.createdAt))
       .limit(limit)
       .offset(offset);
+
+    const formattedNotifications = rawNotifications.map((row) => ({
+      id: row.id,
+      type: row.type,
+      message: row.message,
+      relatedId: row.relatedId,
+      isRead: row.isRead,
+      createdAt: row.createdAt,
+      actor: row.actorId
+        ? {
+            id: row.actorId,
+            username: row.actorUsername,
+            fullname: row.actorFullname,
+            profileImageUrl: row.actorProfileImageUrl,
+          }
+        : null,
+    }));
 
     const [unreadCountResult] = await db
       .select({ count: sql<number>`count(*)` })
@@ -236,7 +270,7 @@ class NotificationService implements INotificationService {
       );
 
     return {
-      notifications: userNotifications,
+      notifications: formattedNotifications,
       unreadCount: Number(unreadCountResult?.count || 0),
     };
   }
