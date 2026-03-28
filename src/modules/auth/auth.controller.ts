@@ -9,6 +9,8 @@ import {
   ForgotPasswordInput,
   ResetPasswordInput,
 } from "./dtos/password-reset.dto";
+import { UpdatePasswordInput } from "./dtos/update-password.dto";
+import { AppError } from "../../shared/utils/app.error";
 import env from "../../config/env";
 
 // Cookie Config (HttpOnly)
@@ -163,7 +165,24 @@ export class AuthController {
     }
   }
 
-  // 6. Google Callback
+  public async updatePassword(
+    req: Request<Record<string, never>, unknown, UpdatePasswordInput>,
+    res: Response,
+    next: NextFunction,
+  ) {
+    try {
+      if (!req.user) {
+        throw new AppError(HTTP_STATUS.UNAUTHORIZED, "Authentication required");
+      }
+
+      const result = await authService.updatePassword(req.user.id, req.body);
+      
+      new ApiResponse(res, HTTP_STATUS.OK, result.message, null).send();
+    } catch (error) {
+      next(error);
+    }
+  }
+
   public async googleCallback(req: Request, res: Response, next: NextFunction) {
     try {
       const driverUser = req.user;
