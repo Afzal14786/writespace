@@ -42,7 +42,6 @@ class InteractionsController {
     }
   };
 
-  // 🔥 1. Controller for Top Level Comments
   public getTopLevelComments = async (
     req: AuthRequest<unknown, { cursor?: string; limit?: string }, { postId: string }>,
     res: Response,
@@ -52,7 +51,7 @@ class InteractionsController {
       const postId = req.params.postId;
       const limit = parseInt(req.query.limit || "20", 10);
       const cursor = req.query.cursor;
-      const requesterId = req.user?.id; // Optional for auth-aware fetching
+      const requesterId = req.user?.id; 
 
       const data = await interactionsService.getTopLevelComments(
         postId,
@@ -72,7 +71,6 @@ class InteractionsController {
     }
   };
 
-  // 🔥 2. Controller for Fetching Nested Replies
   public getCommentReplies = async (
     req: AuthRequest<unknown, { cursor?: string; limit?: string }, { commentId: string }>,
     res: Response,
@@ -102,7 +100,6 @@ class InteractionsController {
     }
   };
 
-  // 🔥 3. Controller for Liking Comments
   public likeComment = async (
     req: AuthRequest<unknown, unknown, { commentId: string }>,
     res: Response,
@@ -118,6 +115,28 @@ class InteractionsController {
         res,
         HTTP_STATUS.OK,
         result.status === "liked" ? "Comment liked" : "Comment unliked",
+        result,
+      ).send();
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public likePost = async (
+    req: AuthRequest<unknown, unknown, { postId: string }>,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const userId = req.user!.id;
+      const postId = req.params.postId;
+
+      const result = await interactionsService.toggleLikePost(postId, userId);
+      
+      new ApiResponse(
+        res,
+        HTTP_STATUS.OK,
+        result.status === "liked" ? "Post liked" : "Post unliked",
         result,
       ).send();
     } catch (error) {

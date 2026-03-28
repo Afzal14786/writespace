@@ -84,6 +84,12 @@ router.post(
   interactionsController.likeComment as RequestHandler
 );
 
+router.post(
+  "/posts/:postId/like",
+  authenticate as RequestHandler,
+  interactionsController.likePost as RequestHandler
+);
+
 /**
  * @swagger
  * /api/comments/{commentId}:

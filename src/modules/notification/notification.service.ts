@@ -8,6 +8,10 @@ import { otpVerifyTemplate } from "./templates/otp-verify";
 import { NotificationType } from "./interface/notification.interface";
 import { addInteractionJob } from "../../shared/queues/interaction.queue";
 
+import { db } from "../../db";
+import { notifications } from "../../db/schema/notifications";
+import { eq, desc, and, inArray, sql } from "drizzle-orm";
+
 interface INotificationService {
   sendWelcomeEmail(to: string, username: string, userId: string): Promise<void>;
   sendPasswordResetEmail(
@@ -41,6 +45,11 @@ interface INotificationService {
     actorId: string,
     postId: string,
   ): Promise<void>;
+
+  // REST API METHODS
+  getUserNotifications(userId: string, limit?: number, offset?: number): Promise<{ notifications: unknown[]; unreadCount: number }>;
+  markAsRead(notificationIds: number[], userId: string): Promise<void>;
+  markAllAsRead(userId: string): Promise<void>;
 }
 
 class NotificationService implements INotificationService {
@@ -83,7 +92,7 @@ class NotificationService implements INotificationService {
     to: string,
     username: string,
     ip: string,
-    userId: string,
+    _userId: string,
   ): Promise<void> {
     const time = new Date().toLocaleString();
     const html = loginAlertTemplate({
@@ -206,6 +215,47 @@ class NotificationService implements INotificationService {
       message,
       relatedId,
     });
+  }
+
+  public async getUserNotifications(userId: string, limit: number = 20, offset: number = 0) {
+    const userNotifications = await db
+      .select()
+      .from(notifications)
+      .where(eq(notifications.recipientId, userId))
+      .orderBy(desc(notifications.createdAt))
+      .limit(limit)
+      .offset(offset);
+
+    const [unreadCountResult] = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(notifications)
+      .where(and(eq(notifications.recipientId, userId), eq(notifications.isRead, false)));
+
+    return {
+      notifications: userNotifications,
+      unreadCount: Number(unreadCountResult?.count || 0)
+    };
+  }
+
+  public async markAsRead(notificationIds: number[], userId: string): Promise<void> {
+    if (!notificationIds || notificationIds.length === 0) return;
+
+    await db
+      .update(notifications)
+      .set({ isRead: true })
+      .where(
+        and(
+          inArray(notifications.id, notificationIds),
+          eq(notifications.recipientId, userId) 
+        )
+      );
+  }
+
+  public async markAllAsRead(userId: string): Promise<void> {
+    await db
+      .update(notifications)
+      .set({ isRead: true })
+      .where(eq(notifications.recipientId, userId));
   }
 }
 

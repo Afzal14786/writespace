@@ -1,19 +1,36 @@
-import { Worker } from "bullmq";
+import { Worker, type Job } from "bullmq";
 import env from "../../config/env";
 import { db } from "../../db";
-import { notifications } from "../../db/schema";
-import { IInteractionJob } from "./interaction.queue";
+import { notifications, users } from "../../db/schema";
+import { eq } from "drizzle-orm";
+import { type IInteractionJob } from "./interaction.queue";
 import logger from "../../config/logger";
 
 export const interactionWorker = new Worker<IInteractionJob>(
   "interaction-queue",
-  async (job) => {
-    const { recipientId, type, message, relatedId } = job.data;
+  async (job: Job<IInteractionJob>) => {
+    const { recipientId, type, message, relatedId, actorId } = job.data;
+
+    let finalMessage = message;
+
+    if (actorId) {
+      const [actor] = await db
+        .select({ fullname: users.fullname, username: users.username })
+        .from(users)
+        .where(eq(users.id, actorId))
+        .limit(1);
+
+      if (actor) {
+        const displayName = actor.fullname || actor.username;
+        // Transforms "liked your post." into "John Doe liked your post."
+        finalMessage = `${displayName} ${message}`; 
+      }
+    }
 
     await db.insert(notifications).values({
       recipientId,
       type,
-      message,
+      message: finalMessage,
       relatedId,
     });
   },
@@ -26,8 +43,6 @@ export const interactionWorker = new Worker<IInteractionJob>(
   },
 );
 
-interactionWorker.on("completed", (_job) => {});
-
-interactionWorker.on("failed", (job, err) => {
+interactionWorker.on("failed", (job: Job<IInteractionJob> | undefined, err: Error) => {
   logger.error(`Interaction job ${job?.id} failed: ${err.message}`);
 });

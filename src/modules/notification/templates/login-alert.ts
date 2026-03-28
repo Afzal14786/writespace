@@ -1,25 +1,20 @@
-import { emailLayout } from "./layout";
-import { ILoginAlertPayload } from "../interface/email.interface";
+import { baseEmailLayout } from "./layout";
 
-export const loginAlertTemplate = (data: ILoginAlertPayload) =>
-  emailLayout(
-    `
-    <h2 style="color: #2d3748; margin-top: 0;">New Login Detected ⚠️</h2>
-    <p>Hi ${data.username},</p>
-    <p>We noticed a new login to your account from a new device.</p>
-    
-    <div style="background-color: #fff5f5; border-left: 4px solid #fc8181; padding: 15px; margin: 20px 0; border-radius: 4px;">
-        <p style="margin: 5px 0;"><strong>Time:</strong> ${data.time}</p>
-        <p style="margin: 5px 0;"><strong>IP Address:</strong> ${data.ip}</p>
-        ${data.device ? `<p style="margin: 5px 0;"><strong>Device:</strong> ${data.device}</p>` : ""}
+export const loginAlertTemplate = (data: { username: string; time: string; ip: string; secureAccountLink: string }) => {
+  const content = `
+    <div>
+      <h2 style="color: #0f172a; margin-bottom: 16px;">New Login Detected</h2>
+      <p>Hi ${data.username},</p>
+      <p>We noticed a recent login to your Writespace account with the following details:</p>
+      <ul style="background: #f1f5f9; padding: 16px; border-radius: 8px; list-style: none; margin: 16px 0;">
+        <li style="margin-bottom: 8px;"><strong>Time:</strong> ${data.time}</li>
+        <li><strong>IP Address:</strong> ${data.ip}</li>
+      </ul>
+      <p>If this was you, no further action is needed.</p>
+      <p>If you don't recognize this activity, please secure your account immediately.</p>
+      <br/>
+      <a href="${data.secureAccountLink}" class="button">Secure Account</a>
     </div>
-
-    <p>If this was you, you can ignore this email.</p>
-    <p><strong>If you don't recognize this activity</strong>, please secure your account immediately.</p>
-
-    <div style="text-align: center;">
-        <a href="${data.secureAccountLink}" class="btn" style="background-color: #e53e3e; box-shadow: 0 4px 6px rgba(229, 62, 62, 0.2);">Secure My Account</a>
-    </div>
-`,
-    "Security Alert: New Login",
-  );
+  `;
+  return baseEmailLayout(content, "New Login Alert - Writespace");
+};

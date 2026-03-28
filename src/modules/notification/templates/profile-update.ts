@@ -1,20 +1,14 @@
-import { emailLayout } from "./layout";
-import { IProfileUpdatePayload } from "../interface/email.interface";
+import { baseEmailLayout } from "./layout";
 
-export const profileUpdateTemplate = (data: IProfileUpdatePayload) =>
-  emailLayout(
-    `
-    <h2 style="color: #2d3748; margin-top: 0;">Profile Updated</h2>
-    <p>Hi ${data.username},</p>
-    <p>Your profile information has been successfully updated.</p>
-    
-    <div style="text-align: center;">
-        <a href="${data.profileLink}" class="btn">View Profile</a>
+export const profileUpdateTemplate = (data: { username: string; profileLink: string }) => {
+  const content = `
+    <div>
+      <h2 style="color: #0f172a; margin-bottom: 16px;">Profile Information Updated</h2>
+      <p>Hi ${data.username},</p>
+      <p>This is a quick notification to let you know that the core identity information on your Writespace profile has been updated.</p>
+      <br/>
+      <a href="${data.profileLink}" class="button">View Profile</a>
     </div>
-    
-    <p style="font-size: 14px; color: #718096;">
-        If you didn't make these changes, please check your account security settings.
-    </p>
-`,
-    "Profile Information Updated",
-  );
+  `;
+  return baseEmailLayout(content, "Profile Updated - Writespace");
+};
