@@ -64,7 +64,7 @@ export class AuthController {
     next: NextFunction,
   ) {
     try {
-      const ip = req.ip || "Unknown IP";
+      const ip = req.ip || req.socket.remoteAddress || "Unknown IP";
       const { user, accessToken, refreshToken } = await authService.login(
         req.body,
         ip,

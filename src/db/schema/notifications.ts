@@ -27,6 +27,7 @@ export const notifications = pgTable(
     recipientId: uuid("recipient_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
+    actorId: uuid("actor_id").references(() => users.id, { onDelete: "set null" }),
     type: notificationTypeEnum("type").notNull(),
     message: text("message").notNull(),
     relatedId: text("related_id"),

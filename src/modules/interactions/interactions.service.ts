@@ -1,12 +1,14 @@
 import { eq, and, desc, sql, isNull, lt } from "drizzle-orm";
 import { db } from "../../db";
-import { comments, shares, posts, users } from "../../db/schema";
+import { comments, shares, posts, users, likes } from "../../db/schema";
 import { commentLikes } from "../../db/schema/comment-likes"; 
 import { AddCommentDto } from "./dtos/add-comment.dto";
 import { AppError } from "../../shared/utils/app.error";
 import { HTTP_STATUS } from "../../shared/constants/http-codes";
 import { addInteractionJob } from "../../shared/queues/interaction.queue";
 import { NotificationType } from "../../modules/notification/interface/notification.interface";
+import { notificationService } from "../notification/notification.service";
+import logger from "../../config/logger";
 
 class InteractionsService {
   public async createComment(
@@ -59,28 +61,26 @@ class InteractionsService {
     });
 
     if (parentCommentAuthor) {
-      await addInteractionJob({
+      addInteractionJob({
         type: NotificationType.COMMENT,
         recipientId: parentCommentAuthor,
         actorId: userId,
         relatedId: postId,
         message: "replied to your comment",
-      });
+      }).catch((err: unknown) => logger.error("Failed to queue reply notification", { error: err instanceof Error ? err.message : String(err) }));
     } else if (post.authorId !== userId) {
-      await addInteractionJob({
+      addInteractionJob({
         type: NotificationType.COMMENT,
         recipientId: post.authorId,
         actorId: userId,
         relatedId: postId,
         message: "commented on your post",
-      });
+      }).catch((err: unknown) => logger.error("Failed to queue comment notification", { error: err instanceof Error ? err.message : String(err) }));
     }
 
-    // Instantly return hydrated comment for optimistic UI
     return await this.getCommentById(newCommentId!, userId);
   }
 
-  // 🔥 1. Fetch Top Level Comments Only (Cursor Pagination)
   public async getTopLevelComments(
     postId: string,
     limit: number = 20,
@@ -138,7 +138,6 @@ class InteractionsService {
     return { comments: formattedComments, nextCursor };
   }
 
-  // 🔥 2. Fetch Replies On Demand (Lazy Loading)
   public async getCommentReplies(
     parentCommentId: string,
     limit: number = 20,
@@ -227,11 +226,23 @@ class InteractionsService {
     };
   }
 
-  // 🔥 3. The New Like Comment Logic
   public async likeComment(commentId: string, userId: string): Promise<{ status: "liked" | "unliked" }> {
     let resultStatus: "liked" | "unliked";
+    let commentAuthorId: string | null = null;
+    let relatedPostId: string | null = null;
 
     await db.transaction(async (tx) => {
+      const [comment] = await tx
+        .select({ authorId: comments.authorId, postId: comments.postId })
+        .from(comments)
+        .where(eq(comments.id, commentId))
+        .limit(1);
+
+      if (comment) {
+        commentAuthorId = comment.authorId;
+        relatedPostId = comment.postId;
+      }
+
       const [existingLike] = await tx
         .select()
         .from(commentLikes)
@@ -248,6 +259,59 @@ class InteractionsService {
         resultStatus = "liked";
       }
     });
+
+    if (resultStatus! === "liked" && commentAuthorId && commentAuthorId !== userId && relatedPostId) {
+      addInteractionJob({
+        type: NotificationType.LIKE,
+        recipientId: commentAuthorId,
+        actorId: userId,
+        relatedId: relatedPostId,
+        message: "liked your comment.",
+      }).catch((err: unknown) => logger.error("Failed to queue comment like notification", { error: err instanceof Error ? err.message : String(err) }));
+    }
+
+    return { status: resultStatus! };
+  }
+
+  public async toggleLikePost(postId: string, userId: string): Promise<{ status: "liked" | "unliked" }> {
+    let resultStatus: "liked" | "unliked";
+    let postAuthorId: string | null = null;
+
+    await db.transaction(async (tx) => {
+      const [post] = await tx
+        .select({ authorId: posts.authorId })
+        .from(posts)
+        .where(eq(posts.id, postId))
+        .limit(1);
+
+      if (!post) {
+        throw new AppError(HTTP_STATUS.NOT_FOUND, "Post not found");
+      }
+      
+      postAuthorId = post.authorId;
+
+      const [existingLike] = await tx
+        .select()
+        .from(likes)
+        .where(and(eq(likes.postId, postId), eq(likes.userId, userId)))
+        .limit(1);
+
+      if (existingLike) {
+        await tx.delete(likes).where(and(eq(likes.postId, postId), eq(likes.userId, userId)));
+        await tx.update(posts).set({ likeCount: sql`${posts.likeCount} - 1` }).where(eq(posts.id, postId));
+        resultStatus = "unliked";
+      } else {
+        await tx.insert(likes).values({ postId, userId });
+        await tx.update(posts).set({ likeCount: sql`${posts.likeCount} + 1` }).where(eq(posts.id, postId));
+        resultStatus = "liked";
+      }
+    });
+
+    // Notify the author if it's a new like
+    if (resultStatus! === "liked" && postAuthorId && postAuthorId !== userId) {
+      notificationService.sendLikeNotification(postAuthorId, userId, postId)
+        .catch((err: unknown) => logger.error("Failed to queue post like notification", { error: err instanceof Error ? err.message : String(err) }));
+    }
 
     return { status: resultStatus! };
   }
@@ -272,13 +336,11 @@ class InteractionsService {
     }
 
     await db.transaction(async (tx) => {
-      // 1. Delete the comment (PostgreSQL ON DELETE CASCADE will automatically delete all deeply nested replies)
       await tx.delete(comments).where(eq(comments.id, commentId));
       await tx.execute(
         sql`UPDATE posts SET comment_count = (SELECT COUNT(*) FROM comments WHERE post_id = ${comment.postId}) WHERE id = ${comment.postId}`
       );
 
-      // 3. Update the direct parent's reply count (if this was a reply)
       if (comment.parentCommentId) {
         await tx.execute(
           sql`UPDATE comments SET reply_count = (SELECT COUNT(*) FROM comments WHERE parent_comment_id = ${comment.parentCommentId}) WHERE id = ${comment.parentCommentId}`
@@ -292,7 +354,6 @@ class InteractionsService {
     commentId: string,
     content: string
   ) {
-    // 1. Find the comment
     const [comment] = await db
       .select()
       .from(comments)
@@ -303,7 +364,6 @@ class InteractionsService {
       throw new AppError(HTTP_STATUS.NOT_FOUND, "Comment not found");
     }
 
-    // 2. SECURITY CHECK: Ensure the requester is the author
     if (comment.authorId !== userId) {
       throw new AppError(
         HTTP_STATUS.FORBIDDEN,
@@ -311,19 +371,27 @@ class InteractionsService {
       );
     }
 
-    // 3. Update the comment and set isEdited to true
     await db
       .update(comments)
       .set({ content, isEdited: true })
       .where(eq(comments.id, commentId));
 
-    // 4. Return the fully hydrated comment so the UI updates instantly
     return await this.getCommentById(commentId, userId);
   }
 
-  
   public async logShare(userId: string, postId: string, platform: string): Promise<void> {
     await db.insert(shares).values({ userId, postId, platform });
+
+    const [post] = await db
+      .select({ authorId: posts.authorId })
+      .from(posts)
+      .where(eq(posts.id, postId))
+      .limit(1);
+
+    if (post && post.authorId !== userId) {
+      notificationService.sendShareNotification(post.authorId, userId, postId)
+        .catch((err: unknown) => logger.error("Failed to queue share notification", { error: err instanceof Error ? err.message : String(err) }));
+    }
   }
 }
 

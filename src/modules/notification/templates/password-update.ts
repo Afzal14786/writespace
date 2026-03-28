@@ -1,17 +1,15 @@
-import { emailLayout } from "./layout";
-import { IPasswordUpdatePayload } from "../interface/email.interface";
+import { baseEmailLayout } from "./layout";
 
-export const passwordUpdateTemplate = (data: IPasswordUpdatePayload) =>
-  emailLayout(
-    `
-    <h2 style="color: #2d3748; margin-top: 0;">Password Changed</h2>
-    <p>Hi ${data.username},</p>
-    <p>This email is to confirm that your password was successfully changed.</p>
-    <p>If you did not authorized this action, please contact our support team immediately to lock your account.</p>
-
-    <div style="text-align: center;">
-        <a href="${data.contactSupportLink}" class="btn">Contact Support</a>
+export const passwordUpdateTemplate = (data: { username: string; contactSupportLink: string }) => {
+  const content = `
+    <div>
+      <h2 style="color: #0f172a; margin-bottom: 16px;">Password Updated</h2>
+      <p>Hi ${data.username},</p>
+      <p>The password for your Writespace account was successfully changed.</p>
+      <p>If you did not make this change, please contact support immediately to secure your account.</p>
+      <br/>
+      <a href="${data.contactSupportLink}" class="button">Contact Support</a>
     </div>
-`,
-    "Your password has been changed",
-  );
+  `;
+  return baseEmailLayout(content, "Password Updated - Writespace");
+};

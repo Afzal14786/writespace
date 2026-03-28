@@ -1,22 +1,15 @@
-import { emailLayout } from "./layout";
-import { IOtpPayload } from "../../auth/interface/auth.interface";
+import { baseEmailLayout } from "./layout";
 
-export const otpVerifyTemplate = (data: IOtpPayload) =>
-  emailLayout(
-    `
-    <h2 style="color: #2d3748; margin-top: 0;">Verify Account</h2>
-    <p>Hi,</p>
-    <p>Use the One Time Password (OTP) below to verify your email address and complete registration.</p>
-    
-    <div style="text-align: center; margin: 30px 0;">
-        <span style="font-size: 32px; font-weight: bold; letter-spacing: 5px; color: #764ba2; background: #f4f6f8; padding: 10px 20px; border-radius: 8px;">
-            ${data.otp}
-        </span>
+export const otpVerifyTemplate = (data: { email: string; otp: string }) => {
+  const content = `
+    <div style="text-align: center;">
+      <h2 style="color: #0f172a; margin-bottom: 16px;">Verify Your Email</h2>
+      <p style="margin-bottom: 24px;">Please use the verification code below to confirm your Writespace account: <br/><strong>${data.email}</strong></p>
+      <div style="background-color: #f8fafc; border: 2px dashed #cbd5e1; border-radius: 8px; padding: 16px; margin: 24px auto; max-width: 200px;">
+        <span style="font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #6366f1;">${data.otp}</span>
+      </div>
+      <p style="font-size: 14px; color: #64748b; margin-top: 24px;">This code expires in 10 minutes.</p>
     </div>
-
-    <p style="font-size: 14px; color: #718096; text-align: center;">
-        This OTP is valid for <strong>10 minutes</strong>. Do not share it with anyone.
-    </p>
-`,
-    "Verification Code",
-  );
+  `;
+  return baseEmailLayout(content, "Verify Your Writespace Account");
+};

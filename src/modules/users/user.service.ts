@@ -6,8 +6,12 @@ import { AppError } from "../../shared/utils/app.error";
 import { HTTP_STATUS } from "../../shared/constants/http-codes";
 import type { UpdateProfileDto } from "./dtos/update-profile.dto";
 import type { PublicUser } from "./interface/user.interface";
-import { interactionQueue } from "../../shared/queues/interaction.queue";
+
+// 🔥 FIX 1: Imported the strict queue helper instead of the raw queue
+import { addInteractionJob } from "../../shared/queues/interaction.queue";
 import { NotificationType } from "../notification/interface/notification.interface";
+// 🔥 FIX 2: Imported the notification service for the anti-spam email guard
+import { notificationService } from "../notification/notification.service";
 
 export interface UsernameAvailability {
   available: boolean;
@@ -16,13 +20,17 @@ export interface UsernameAvailability {
 
 export class UserService {
   private static toPublicUser(user: User): PublicUser {
-    const { passwordHash, loginAttempts, lockUntil, ...publicFields } = user;
+    // 🔥 CLEANUP: Dropped unused destructuring variables
+    const { passwordHash, loginAttempts, lockUntil, googleAuth, githubAuth, ...publicFields } = user;
     
+    // Satisfy the compiler that we intentionally omitted these from the return object
     void passwordHash;
     void loginAttempts;
     void lockUntil;
+    void googleAuth;
+    void githubAuth;
     
-    return publicFields;
+    return publicFields as unknown as PublicUser;
   }
 
   public static async checkUsernameAvailability(username: string): Promise<UsernameAvailability> {
@@ -65,7 +73,6 @@ export class UserService {
       if (followRecord) isFollowingByMe = true;
     }
 
-    // 🔥 FIX 3: We no longer run COUNT() queries. We instantly return the user's built-in counters.
     return {
       ...this.toPublicUser(user),
       isFollowingByMe,
@@ -83,19 +90,23 @@ export class UserService {
 
   public static async updateUser(userId: string, updateData: UpdateProfileDto, mediaPaths?: { profileImage?: string; bannerImage?: string }): Promise<PublicUser> {
     const sanitized: Partial<User> = {};
+    let isCriticalUpdate = false; // 🔥 ANTI-SPAM FLAG
 
     // 1. Extract Personal Info
     if (updateData.personal_info) {
       const { fullname, bio, headline, location } = updateData.personal_info;
-      if (fullname !== undefined) sanitized.fullname = fullname;
+      
+      if (fullname !== undefined) {
+        sanitized.fullname = fullname;
+        isCriticalUpdate = true; // Name change warrants an email
+      }
+      
       if (bio !== undefined) sanitized.bio = bio;
       if (headline !== undefined) sanitized.headline = headline;
       if (location !== undefined) sanitized.location = location; 
     }
 
-    // ==========================================
-    // 🔥 FIX: Extract and map Social Links
-    // ==========================================
+    // 2. Extract Social Links
     if (updateData.social_links) {
       const { website, github, twitter, linkedin, instagram, youtube, facebook, leetcode, geekforgeeks, codeforces } = updateData.social_links;
       if (website !== undefined) sanitized.website = website;
@@ -109,7 +120,6 @@ export class UserService {
       if (geekforgeeks !== undefined) sanitized.geeksforgeeks = geekforgeeks;
       if (codeforces !== undefined) sanitized.codeforces = codeforces;
     }
-    // ==========================================
 
     // 3. Extract Media Paths
     if (mediaPaths?.profileImage) {
@@ -132,6 +142,13 @@ export class UserService {
       .returning();
 
     if (!updated) throw new AppError(HTTP_STATUS.NOT_FOUND, "User not found during update");
+
+    // 🔥 ANTI-SPAM TRIGGER: Only send email if a critical field changed
+    if (isCriticalUpdate) {
+      notificationService.sendProfileUpdateEmail(updated.email, updated.username)
+        .catch(err => console.error("Failed to send profile update email:", err));
+    }
+
     return this.toPublicUser(updated);
   }
 
@@ -164,6 +181,7 @@ export class UserService {
       ),
     });
 
+    // Unfollow Logic
     if (existingFollow) {
       await db.transaction(async (tx) => {
         await tx.delete(follows).where(
@@ -184,7 +202,9 @@ export class UserService {
 
       return { status: "unfollowed" };
       
-    } else {
+    } 
+    // Follow Logic
+    else {
       await db.transaction(async (tx) => {
         await tx.insert(follows).values({
           followerId: currentUserId,
@@ -200,11 +220,12 @@ export class UserService {
           .where(eq(users.id, currentUserId));
       });
 
-      await interactionQueue.add("processInteraction", {
+      // 🔥 FIX 3: Correctly using the `addInteractionJob` helper so BullMQ formats it properly!
+      await addInteractionJob({
         type: NotificationType.FOLLOW,
         actorId: currentUserId,
         recipientId: targetUserId,
-        message: "started following you"
+        message: "started following you",
       });
 
       return { status: "followed" };
