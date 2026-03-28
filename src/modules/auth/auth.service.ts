@@ -10,6 +10,7 @@ import { HTTP_STATUS } from "../../shared/constants/http-codes";
 import { notificationService } from "../notification/notification.service";
 import { RegisterInput } from "./dtos/register.dto";
 import { LoginInput } from "./dtos/login.dto";
+import { UpdatePasswordInput } from "./dtos/update-password.dto";
 import { generateOTP } from "./auth.utils";
 import { IJwtPayload, IOAuthProfile } from "./interface/auth.interface";
 import logger from "../../config/logger";
@@ -298,6 +299,46 @@ class AuthService {
     );
 
     return { message: "Password reset successful. Please log in again." };
+  }
+
+  public async updatePassword(userId: string, data: UpdatePasswordInput) {
+    const [user] = await db
+      .select({ 
+        id: users.id, 
+        passwordHash: users.passwordHash, 
+        email: users.email, 
+        username: users.username 
+      })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+
+    if (!user || !user.passwordHash) {
+      throw new AppError(HTTP_STATUS.BAD_REQUEST, "User not found or uses social login without a password.");
+    }
+
+    const isMatch = await bcrypt.compare(data.currentPassword, user.passwordHash);
+    if (!isMatch) {
+      throw new AppError(HTTP_STATUS.UNAUTHORIZED, "Incorrect current password");
+    }
+
+    const newPasswordHash = await bcrypt.hash(data.newPassword, SALT_ROUNDS);
+
+    await db
+      .update(users)
+      .set({ passwordHash: newPasswordHash })
+      .where(eq(users.id, userId));
+
+    for await (const key of redis.scanIterator({
+      MATCH: `refresh_token:${userId}:*`,
+      COUNT: 100
+    })) {
+      await redis.del(key);
+    }
+
+    await notificationService.sendPasswordUpdateEmail(user.email, user.username);
+
+    return { message: "Password updated successfully" };
   }
 
   private async signTokens(userId: string, role: string) {
