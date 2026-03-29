@@ -14,6 +14,7 @@ import helmet from "helmet";
 import cors from "cors";
 import { errorHandler } from "./shared/middlewares/error.middleware";
 import { apiLimiter } from "./shared/middlewares/rate-limit.middleware";
+import { botInterceptor } from './shared/middlewares/bot-interceptor.middleware';
 import { env } from "./config/env";
 import { configurePassport } from "./modules/auth/auth.utils";
 import passport from "passport";
@@ -38,7 +39,7 @@ app.use(httpLogger);
 app.use("/uploads", express.static("uploads"));
 configurePassport();
 app.use(passport.initialize());
-
+app.use(botInterceptor);
 // app.use("/api/v1", apiLimiter);
 
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
