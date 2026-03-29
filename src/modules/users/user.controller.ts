@@ -3,6 +3,7 @@ import { UserService } from "./user.service";
 import { ApiResponse } from "../../shared/utils/api-response";
 import { HTTP_STATUS } from "../../shared/constants/http-codes";
 import { AppError } from "../../shared/utils/app.error";
+import { generateProfileOgImage } from '../../shared/utils/og-generator';
 import type { UpdateProfileDto } from "./dtos/update-profile.dto";
 
 export class UserController {
@@ -164,6 +165,47 @@ export class UserController {
       ).send();
     } catch (error) {
       next(error);
+    }
+  }
+
+  /**
+   * GET /api/v1/users/og/:username
+   * Dynamically generates and returns a PNG image for Open Graph sharing.
+   */
+  public static async getProfileDynamicOgImage(req: Request, res: Response): Promise<void> {
+    try {
+      const username = req.params.username as string;
+      
+      if (!username) {
+        throw new AppError(HTTP_STATUS.BAD_REQUEST, "Username parameter is required");
+      }
+
+      // Fetch the raw user data required for the image
+      const userData = await UserService.getRawUserDataForOgImage(username);
+
+      // Format Avatar URL (Satori needs absolute URLs)
+      let absoluteAvatarUrl = userData.profileImageUrl;
+      if (absoluteAvatarUrl && absoluteAvatarUrl.startsWith('/')) {
+        absoluteAvatarUrl = `${req.protocol}://${req.get('host')}${absoluteAvatarUrl}`;
+      }
+
+      // Generate the raw PNG Buffer using our new utility
+      const pngBuffer = await generateProfileOgImage({
+        username: userData.username,
+        fullname: userData.fullname,
+        headline: userData.headline,
+        avatar: absoluteAvatarUrl
+      });
+
+      // Send the image directly to the browser/bot (Bypassing standard JSON ApiResponse)
+      res.setHeader('Content-Type', 'image/png');
+      res.setHeader('Cache-Control', 'public, max-age=86400'); // Cache for 24 hours
+      res.status(HTTP_STATUS.OK).send(pngBuffer);
+
+    } catch (error) {
+      // If image generation fails, don't crash the server, just send a 404 or default image
+      console.error('[OG-IMAGE-GEN-ERROR]', error);
+      res.status(HTTP_STATUS.NOT_FOUND).send('Image generation failed');
     }
   }
 }

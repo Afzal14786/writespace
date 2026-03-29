@@ -231,4 +231,25 @@ export class UserService {
       return { status: "followed" };
     }
   }
+
+  /**
+   * Extremely fast, raw DB query used specifically for generating Open Graph Images.
+   */
+  public static async getRawUserDataForOgImage(username: string) {
+    const user = await db.query.users.findFirst({
+      where: eq(users.username, username),
+      columns: {
+        username: true,
+        fullname: true,
+        headline: true,
+        profileImageUrl: true
+      }
+    });
+
+    if (!user) {
+      throw new AppError(HTTP_STATUS.NOT_FOUND, "User not found for OG generation");
+    }
+
+    return user;
+  }
 }
