@@ -1,7 +1,6 @@
 version: '3.8'
 
 services:
-  # Your Writespace API
   api:
     build: .
     ports:
@@ -9,13 +8,12 @@ services:
     environment:
       - NODE_ENV=development
       - PORT=5000
-      - DATABASE_URL=postgresql://postgres:adXnWi33M7$@localhost:5432/writespace
+      - DATABASE_URL=postgresql://admin:secret@postgres_db:5432/writespace
       - REDIS_URL=redis://redis_cache:6379
     depends_on:
       - postgres_db
       - redis_cache
 
-  # Your Database
   postgres_db:
     image: postgres:15-alpine
     ports:
@@ -27,11 +25,10 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
 
-  # Your Redis Cache
   redis_cache:
     image: redis:alpine
     ports:
       - "6379:6379"
 
 volumes:
-  pgdata: # Keeps database data safe even if the container stops
+  pgdata:

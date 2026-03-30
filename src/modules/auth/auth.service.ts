@@ -24,7 +24,6 @@ const RESET_TOKEN_EXPIRE_SEC = 60 * 60;
 const SALT_ROUNDS = 12;
 
 function toPublicUser(user: typeof users.$inferSelect): PublicUser {
-  // WARNING FIXED: Removed unused extractions. We safely map the fields needed.
   const { passwordHash, ...publicFields } = user;
   return publicFields as unknown as PublicUser;
 }
