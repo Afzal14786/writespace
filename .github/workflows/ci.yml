@@ -1,54 +1,51 @@
-name: CI
+name: CI Pipeline
 
 on:
   push:
     branches: [ main ]
+  pull_request:
+    branches: [ main ]
 
 jobs:
-  build:
+  validate-and-test:
+    name: Lint, Build, and Test
     runs-on: ubuntu-latest
 
-    # These are dummy values to satisfy src/config/env.ts
-    # It is safe to expose these in this file because they are fake.
-    env:
-      NODE_ENV: test
-      PORT: 3000
-      DATABASE_URL: postgresql://user:password@localhost:5432/writespace
-      REDIS_URL: redis://localhost:6379
-      REDIS_PASSWORD: dummy_redis_password
-      JWT_SECRET: test_secret_key_12345
-      CLIENT_URL: http://localhost:3000
-      
-      # AWS (Fake)
-      AWS_REGION: us-east-1
-      AWS_ACCESS_KEY_ID: fake_aws_key
-      AWS_SECRET_ACCESS_KEY: fake_aws_secret
-      AWS_BUCKET_NAME: test_bucket
-      
-      # Email (Fake)
-      SMTP_HOST: smtp.example.com
-      SMTP_PORT: 465
-      SMTP_USER: test_user
-      SMTP_PASS: test_pass
-      EMAIL_FROM: no-reply@test.com
-      
-      # OAuth (Fake/Optional)
-      GOOGLE_CLIENT_ID: fake_google_id
-      GOOGLE_CLIENT_SECRET: fake_google_secret
-      GITHUB_CLIENT_ID: fake_github_id
-      GITHUB_CLIENT_SECRET: fake_github_secret
+    services:
+      redis:
+        image: redis:alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
 
     steps:
-    - uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-    - name: Use Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '24.x'
-        cache: 'npm'
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
 
-    - name: Install dependencies
-      run: npm ci
+      - name: Install Dependencies
+        run: npm install
 
-    - name: Build
-      run: npm run build
+      - name: Run Linter
+        run: npm run lint --if-present
+
+      - name: Typecheck & Build
+        run: npm run build --if-present
+
+      - name: Run Unit & Integration Tests
+        run: npm test
+        env:
+          NODE_ENV: test
+          JWT_ACCESS_SECRET: "test-secret-do-not-use-in-prod"
+          JWT_REFRESH_SECRET: "test-secret-do-not-use-in-prod"
+          REDIS_URL: redis://localhost:6379
+          DATABASE_URL: postgres://testuser:testpass@localhost:5432/testdb

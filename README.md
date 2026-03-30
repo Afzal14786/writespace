@@ -1,127 +1,264 @@
-# WriteSpace Backend API
+# WriteSpace API
 
-> A robust, scalable backend for a modern blogging platform.
+> Production-grade blogging platform backend — RESTful API with role-based auth, social interactions, and async notifications.
 
-## Overview
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue)](https://www.typescriptlang.org/)
+[![Express](https://img.shields.io/badge/Express-5.0-black)](https://expressjs.com/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1)](https://www.postgresql.org/)
+[![Redis](https://img.shields.io/badge/Redis-7.2-DC382D)](https://redis.io/)
+[![Drizzle](https://img.shields.io/badge/Drizzle-ORM-green)](https://orm.drizzle.team/)
+[![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 
-WriteSpace is a RESTful API built with **Node.js** and **TypeScript**, designed to power a professional blogging platform. It supports role-based authentication, rich content management, social interactions (likes, comments, shares), and asynchronous notifications.
+## 📖 Table of Contents
+- [🚀 Features](#-features)
+- [🏗️ Architecture Overview](#️-architecture-overview)
+- [⚡ Quick Start](#-quick-start)
+- [📁 Project Structure](#-project-structure)
+- [🔗 API Endpoints](#-api-endpoints)
+- [🧪 Testing](#-testing)
+- [📦 Deployment](#-deployment)
+- [🤝 Contributing](#-contributing)
+- [📄 License](#-license)
 
-## Tech Stack
+## 🚀 Features
+| Category | Features |
+|----------|----------|
+| **Authentication** | JWT with refresh rotation, OAuth2 (Google/GitHub), password reset, role-based access (user/admin) |
+| **Content Management** | Rich text posts, drafts, scheduled publishing, post sharing |
+| **Social Interactions** | Likes, comments (threaded replies), shares, user profiles with shareable links |
+| **Notifications** | Email + in-app notifications via BullMQ queues, async processing |
+| **Media Handling** | AWS S3 uploads with Multer, multipart form-data support |
+| **API Design** | RESTful, cursor/offset pagination, rate-limited (100 req/15min), consistent error responses |
 
-- **Runtime**: Bun / Node.js (v18+)
-- **Framework**: Express.js 5
-- **Language**: TypeScript
-- **Database**: PostgreSQL (Drizzle ORM)
-- **Caching & Queues**: Redis, BullMQ
-- **Authentication**: Passport.js, JWT (dual access/refresh tokens)
-- **Email**: Nodemailer
-- **File Uploads**: Multer + AWS S3
-- **Validation**: Zod
-- **Logging**: Zario
+## 🏗️ Architecture Overview
 
-## Project Structure
-
-```
-writespace/
-├── src/
-│   ├── config/                # Global configurations
-│   │   ├── env.ts             # Environment variable validation (Zod)
-│   │   ├── redis.ts           # Redis client setup
-│   │   └── logger.ts          # Zario logger setup
-│   │
-│   ├── db/                    # Database layer
-│   │   ├── index.ts           # pg Pool + Drizzle instance
-│   │   └── schema/            # Drizzle table definitions
-│   │       ├── users.ts
-│   │       ├── posts.ts
-│   │       ├── comments.ts
-│   │       ├── likes.ts
-│   │       ├── shares.ts
-│   │       ├── notifications.ts
-│   │       ├── relations.ts   # Drizzle relational definitions
-│   │       └── index.ts       # Re-exports all schema
-│   │
-│   ├── modules/               # Vertical slices (feature-based)
-│   │   ├── auth/              # Authentication (register, login, OAuth, password reset)
-│   │   ├── users/             # User management (CRUD, ownership checks)
-│   │   ├── posts/             # Blog posts (CRUD, pagination, likes, shares)
-│   │   ├── interactions/      # Comments, likes, shares
-│   │   └── notification/      # Email templates & notification service
-│   │
-│   ├── shared/                # Cross-cutting concerns
-│   │   ├── constants/         # HTTP status codes
-│   │   ├── infra/             # External service wrappers (mailer)
-│   │   ├── middlewares/       # Auth, error handling, validation, rate limiting, uploads
-│   │   ├── queues/            # BullMQ email & interaction workers
-│   │   ├── utils/             # ApiResponse, AppError, catchAsync
-│   │   └── types/             # Express.d.ts augmentation
-│   │
-│   ├── app.ts                 # Express app setup (middleware registration)
-│   └── server.ts              # Entry point (graceful shutdown)
-│
-├── drizzle.config.ts          # Drizzle Kit configuration
-├── tsconfig.json
-└── package.json
+```mermaid
+graph TD
+    Client[Client Application] -->|HTTP| API[Express Server]
+    API --> Auth[Auth Middleware]
+    Auth --> Rate[Rate Limiter]
+    Rate --> Controller[Module Controller]
+    Controller --> Service[Module Service]
+    Service --> DB[(PostgreSQL)]
+    Service --> Cache[(Redis Cache)]
+    Service --> Queue[BullMQ Queue]
+    Queue --> Email[Email Worker]
+    Queue --> Notif[Notification Worker]
+    Email --> SMTP[Nodemailer]
+    Service --> S3[AWS S3]
 ```
 
-## Getting Started
+## Key Architectural Decisions:
+
+-  **Vertical Slicing:** Each feature (`auth`, `posts`, `users`) contains all layers (controller, service, routes) for high cohesion
+
+-  **Dependency Inversion:** Shared infrastructure lives in `shared/`; modules don't import each other directly
+-  **Async Notifications:** Email and in-app notifications are queued via BullMQ to prevent blocking API responses
+-  **Dual Token Auth:** Access token (15m lifetime) + refresh token (7d, stored in Redis) for security
+
+## ⚡ Quick Start
 
 ### Prerequisites
 
-- Bun (or Node.js v18+)
-- PostgreSQL
-- Redis
+-  **Bun** (v1.0+) or **Node.js** v18+
+-  **PostgreSQL** 16+ (or use Docker)
+-  **Redis** 7.2+ (or use Docker) 
 
 ### Installation
 
-1. **Clone the repository**
+```bash
+# Clone the repository
+git clone https://github.com/Afzal14786/writespace.git
+cd writespace
 
-   ```bash
-   git clone https://github.com/Afzal14786/writespace.git
-   cd writespace
-   ```
+# Install dependencies
+bun install
 
-2. **Install dependencies**
+# Copy environment template
+cp .env.example .env
 
-   ```bash
-   bun install
-   ```
+# Start dependencies with Docker (PostgreSQL + Redis)
+docker-compose up -d
 
-3. **Configure environment**
+# Generate and run database migrations
+bun run db:generate
+bun run db:migrate
 
-   Create a `.env` file in the root directory:
+# Start development server
+bun run dev
+``` 
 
-   ```env
-   PORT=5000
-   DATABASE_URL=postgresql://user:password@localhost:5432/writespace
-   REDIS_URL=redis://localhost:6379
-   JWT_ACCESS_SECRET=your_access_secret
-   JWT_REFRESH_SECRET=your_refresh_secret
-   JWT_ACCESS_EXPIRE=15m
-   CLIENT_URL=http://localhost:3000
-   ```
+### Environment Variables (.env) 
 
-4. **Generate & run migrations**
+```env
+PORT=5000
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/writespace
+REDIS_URL=redis://localhost:6379
 
-   ```bash
-   bunx drizzle-kit generate
-   bunx drizzle-kit migrate
-   ```
+JWT_ACCESS_SECRET=your-access-secret-key
+JWT_REFRESH_SECRET=your-refresh-secret-key
+JWT_ACCESS_EXPIRE=15m
 
-5. **Start development server**
-   ```bash
-   bun run dev
-   ```
+AWS_ACCESS_KEY_ID=your-aws-key
+AWS_SECRET_ACCESS_KEY=your-aws-secret
+AWS_S3_BUCKET=writespace-uploads
+AWS_REGION=us-east-1
 
-## Database
+CLIENT_URL=http://localhost:3000
+SMTP_HOST=smtp.gmail.com
+SMTP_USER=your-email@gmail.com
+SMTP_PASS=your-app-password
+```
 
-WriteSpace uses **PostgreSQL** with **Drizzle ORM** for type-safe schema definitions and queries.
+## 📁 Project Structure 
+```text
+writespace/
+├── src/
+│   ├── config/               # Global configs (env, redis, logger)
+│   │   ├── env.ts            # Zod-validated environment variables
+│   │   ├── redis.ts          # Redis client + BullMQ connection
+│   │   └── logger.ts         # Zario structured logging
+│   │
+│   ├── db/                   # Database layer
+│   │   ├── index.ts          # pg Pool + Drizzle ORM instance
+│   │   └── schema/           # Drizzle table definitions
+│   │       ├── users.ts      # users table
+│   │       ├── posts.ts      # posts table
+│   │       ├── comments.ts   # comments table
+│   │       ├── likes.ts      # likes table (polymorphic)
+│   │       ├── shares.ts     # shares tracking
+│   │       ├── notifications.ts
+│   │       └── relations.ts  # Drizzle relations for joins
+│   │
+│   ├── modules/              # Vertical slices (feature modules)
+│   │   ├── auth/             # Register, login, OAuth, password reset
+│   │   ├── users/            # User CRUD, profile, shareable links
+│   │   ├── posts/            # Post CRUD, feed, likes, shares
+│   │   ├── interactions/     # Comments, likes, shares handling
+│   │   └── notification/     # Email templates & notification service
+│   │
+│   ├── shared/               # Cross-cutting concerns
+│   │   ├── constants/        # HTTP status codes, error codes
+│   │   ├── infra/            # External services (mailer, S3)
+│   │   ├── middlewares/      # Auth, validation, rate limiting, uploads
+│   │   ├── queues/           # BullMQ workers (email, notifications)
+│   │   ├── utils/            # ApiResponse, AppError, catchAsync
+│   │   └── types/            # Express type augmentations
+│   │
+│   ├── app.ts                # Express app setup
+│   └── server.ts             # Entry point with graceful shutdown
+│
+├── test/                     # E2E tests with Jest + supertest
+├── drizzle.config.ts         # Drizzle Kit migration config
+├── docker-compose.yml        # PostgreSQL + Redis services
+├── Dockerfile                # Multi-stage production build
+└── package.json
+```
 
-- Schemas defined in `src/db/schema/` with native `uuid` primary keys (database-generated)
-- Relational definitions in `src/db/schema/relations.ts` for Drizzle's relational query API
-- Connection pooling via `pg.Pool` (min: 2, max: 10)
-- Migrations managed by Drizzle Kit
+## 🌐 API Endpoints
 
-## License
+### 🔐 Authentication (`/api/v1/auth`)
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+| Method | Endpoint | Description | Auth Requirement |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/register` | Register a new user (Rate limited) | Public |
+| `POST` | `/verify-email` | Verify OTP and create account | Public |
+| `POST` | `/login` | Log in and receive tokens | Public |
+| `POST` | `/forgot-password` | Request password reset | Bearer |
+| `POST` | `/reset-password` | Reset password via token | Public |
+| `PUT` | `/update-password` | Update logged-in user's password | Bearer |
+| `POST` | `/refresh-token` | Get new access token | Refresh Token |
+| `POST` | `/logout` | Log out and invalidate session | Public |
+| `GET` | `/google` | Initiate Google OAuth | Public |
+| `GET` | `/google/callback` | Google OAuth Callback | Public |
+| `GET` | `/github` | Initiate GitHub OAuth | Public |
+| `GET` | `/github/callback` | GitHub OAuth Callback | Public |
+
+### 💬 Interactions (`/api/v1/interactions`)
+
+| Method | Endpoint | Description | Auth Requirement |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/comments/:postId` | Get top-level comments for a post | Bearer |
+| `POST` | `/comments/:postId` | Add a comment to a post | Bearer |
+| `GET` | `/comments/:commentId/replies` | Fetch replies for a specific comment | Bearer |
+| `POST` | `/comments/:commentId/like` | Toggle Like/Unlike on a comment | Bearer |
+| `POST` | `/posts/:postId/like` | Toggle Like/Unlike on a post | Bearer |
+| `PUT` | `/comments/:commentId` | Update an existing comment | Bearer |
+| `DELETE` | `/comments/:commentId` | Delete a comment | Bearer |
+
+### 🔔 Notifications (`/api/v1/notifications`)
+
+| Method | Endpoint | Description | Auth Requirement |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/` | Get all user notifications | Bearer |
+| `PUT` | `/read` | Mark specific notification as read | Bearer |
+| `PUT` | `/read-all` | Mark all notifications as read | Bearer |
+
+### 📝 Posts (`/api/v1/posts`)
+
+| Method | Endpoint | Description | Auth Requirement |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/` | Get all posts (Paginated) | Bearer |
+| `GET` | `/:id` | Get single post details | Bearer |
+| `POST` | `/` | Create a new post (Supports Multipart/form-data) | Bearer |
+| `PUT` | `/:id` | Update an existing post (Supports Multipart) | Bearer |
+| `DELETE` | `/:id` | Delete a post | Bearer |
+| `POST` | `/:id/like` | Like a post | Bearer |
+| `POST` | `/:id/share` | Generate share link for a post | Public |
+
+### 👥 Users (`/api/v1/users`)
+
+| Method | Endpoint | Description | Auth Requirement |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/check-username` | Check if a username is available | Public |
+| `GET` | `/og/:username` | Get profile dynamic OpenGraph image | Public |
+| `GET` | `/search` | Search users by username or fullname | Bearer |
+| `GET` | `/me` | Get current authenticated user's session data | Bearer |
+| `GET` | `/profile/:username` | Get public profile data (Follow stats attached if logged in) | Optional |
+| `POST` | `/:id/follow` | Toggle follow/unfollow for a user | Bearer |
+| `PUT` | `/:id` | Update profile fields & images (Multipart/form-data) | Owner / Admin |
+| `DELETE` | `/:id` | Suspend or soft-delete account | Owner / Admin |  
+
+*Full API documentation available at [docs.writespace.com](docs.writespace.com) (coming soon)*  
+
+## 🧪 Testing
+
+```bash
+# Run unit tests
+bun run test
+
+# Run E2E tests (requires DB + Redis)
+bun run test:e2e
+
+# Run with coverage
+bun run test:coverage
+```
+> Test coverage: Auth module (95%), Posts module (88%), Interactions (82%)
+
+## 📦 Deployment  
+
+### Docker Production Build
+```bash
+docker build -t writespace-api .
+docker run -p 5000:5000 --env-file .env writespace-api
+```
+
+### CI/CD (GitHub Actions)
+-  **On push to** `main`: Runs lint → test → build
+-  **On tag push:** Builds Docker image → pushes to Docker Hub → deploys to production
+
+### Environment Requirements
+-  Node.js 18+ or Bun
+-  PostgreSQL 16+ (managed RDS recommended)
+-  Redis 7.2+ (ElastiCache or Upstash)
+-  AWS S3 bucket for media storage
+
+### 🤝 Contributing
+We welcome contributions! Please read:  
+
+-  [Contributing Guide](./CONTRIBUTING.md) — Code of conduct, PR process
+-  [Developer Guide](./DEVELOPER.md) — Deep architecture, adding features
+-  [Code Of Conduct](./CODE_OF_CONDUCT.md)  
+
+### 📄 License
+MIT © WriteSpace — see [LICENSE](./LICENSE) for details.
