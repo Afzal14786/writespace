@@ -24,7 +24,7 @@ const RESET_TOKEN_EXPIRE_SEC = 60 * 60;
 const SALT_ROUNDS = 12;
 
 function toPublicUser(user: typeof users.$inferSelect): PublicUser {
-  const { passwordHash, ...publicFields } = user;
+  const {...publicFields } = user;
   return publicFields as unknown as PublicUser;
 }
 

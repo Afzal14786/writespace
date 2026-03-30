@@ -90,20 +90,22 @@ const localUploadDir = "uploads/";
 if (!fs.existsSync(localUploadDir)) {
   fs.mkdirSync(localUploadDir, { recursive: true });
 }
-
-const localStorage = multer.diskStorage({
-  destination: function (req: Request, file: Express.Multer.File, cb: (error: Error | null, destination: string) => void) {
-    cb(null, localUploadDir);
-  },
-  filename: function (req: Request, file: Express.Multer.File, cb: (error: Error | null, filename: string) => void) {
-    const userId = req.user?.id || "anonymous";
-    const cleanName = file.originalname
-      .replace(/\s+/g, "-")
-      .replace(/[^a-zA-Z0-9.\-_]/g, "")
-      .toLowerCase();
-    cb(null, `${userId}-${Date.now()}-${cleanName}`);
-  }
-});
+/**
+ * When we are working locally ...
+ */
+// const localStorage = multer.diskStorage({
+//   destination: function (req: Request, file: Express.Multer.File, cb: (error: Error | null, destination: string) => void) {
+//     cb(null, localUploadDir);
+//   },
+//   filename: function (req: Request, file: Express.Multer.File, cb: (error: Error | null, filename: string) => void) {
+//     const userId = req.user?.id || "anonymous";
+//     const cleanName = file.originalname
+//       .replace(/\s+/g, "-")
+//       .replace(/[^a-zA-Z0-9.\-_]/g, "")
+//       .toLowerCase();
+//     cb(null, `${userId}-${Date.now()}-${cleanName}`);
+//   }
+// });
 
 /**
  * Exported Multer Instance.
@@ -111,7 +113,7 @@ const localStorage = multer.diskStorage({
  * Example: router.post('/upload', upload.array('images', 5), controller.handleUpload);
  */
 export const upload = multer({
-  storage: localStorage, 
+  storage: s3Storage, 
   limits: {
     fileSize: 50 * 1024 * 1024, // 50MB limit per file
     files: 5, // Limit max number of files per upload to 5 (prevent DoS)
