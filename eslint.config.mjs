@@ -3,23 +3,25 @@ import globals from "globals";
 import tseslint from "typescript-eslint";
 
 export default [
-  // Ignore patterns
+  // Global ignores
   {
     ignores: ["dist/", "node_modules/", "coverage/"],
   },
-  // JavaScript files (including .mjs) - basic recommended rules
+  // JavaScript files (including .mjs)
   {
     files: ["**/*.{js,mjs,cjs}"],
-    ...js.configs.recommended,
     languageOptions: {
       globals: {
         ...globals.node,
         ...globals.jest,
       },
     },
+    ...js.configs.recommended,
   },
+  // TypeScript files (excluding test overrides)
   {
     files: ["**/*.{ts,tsx,mts,cts}"],
+    ignores: ["test/**/*"], // skip test files here, handled separately
     ...tseslint.configs.recommended,
     languageOptions: {
       parser: tseslint.parser,
@@ -42,9 +44,16 @@ export default [
       "@typescript-eslint/no-unsafe-argument": "warn",
     },
   },
-  // Overrides for test files - allow any and unsafe access
+  // Test files (relaxed rules)
   {
     files: ["test/**/*.ts"],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+        ...globals.jest,
+      },
+    },
+    ...tseslint.configs.recommended,
     rules: {
       "@typescript-eslint/no-explicit-any": "off",
       "@typescript-eslint/no-unsafe-assignment": "off",
