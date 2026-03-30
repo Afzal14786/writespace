@@ -15,6 +15,14 @@ const router = Router();
  */
 router.get("/check-username", UserController.checkUsername);
 router.get("/og/:username", UserController.getProfileDynamicOgImage);
+
+/**
+ * @route   GET /api/v1/users/search
+ * @desc    Search users by username or fullname
+ * @access  Private
+ */
+router.get("/search", authenticate, UserController.searchUsers);
+
 /**
  * @route   GET /api/v1/users/me
  * @desc    Get current authenticated user's session data

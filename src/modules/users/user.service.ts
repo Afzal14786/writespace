@@ -1,4 +1,4 @@
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, sql, ilike, or } from "drizzle-orm";
 import { db } from "../../db";
 import { users, type User } from "../../db/schema/users";
 import { follows } from "../../db/schema/follows";
@@ -7,10 +7,8 @@ import { HTTP_STATUS } from "../../shared/constants/http-codes";
 import type { UpdateProfileDto } from "./dtos/update-profile.dto";
 import type { PublicUser } from "./interface/user.interface";
 
-// 🔥 FIX 1: Imported the strict queue helper instead of the raw queue
 import { addInteractionJob } from "../../shared/queues/interaction.queue";
 import { NotificationType } from "../notification/interface/notification.interface";
-// 🔥 FIX 2: Imported the notification service for the anti-spam email guard
 import { notificationService } from "../notification/notification.service";
 
 export interface UsernameAvailability {
@@ -20,7 +18,6 @@ export interface UsernameAvailability {
 
 export class UserService {
   private static toPublicUser(user: User): PublicUser {
-    // 🔥 CLEANUP: Dropped unused destructuring variables
     const { passwordHash, loginAttempts, lockUntil, googleAuth, githubAuth, ...publicFields } = user;
     
     // Satisfy the compiler that we intentionally omitted these from the return object
@@ -54,6 +51,32 @@ export class UserService {
     }
 
     return { available: false, suggestions };
+  }
+
+  /**
+   * Search users by username or fullname
+   */
+  public static async searchUsers(query: string, limitCount = 5) {
+    if (!query || query.trim() === "") return [];
+
+    const searchPattern = `%${query}%`;
+
+    const results = await db.query.users.findMany({
+      where: or(
+        ilike(users.username, searchPattern),
+        ilike(users.fullname, searchPattern)
+      ),
+      columns: {
+        id: true,
+        username: true,
+        fullname: true,
+        profileImageUrl: true,
+        headline: true
+      },
+      limit: limitCount
+    });
+
+    return results;
   }
 
   public static async getUserProfile(username: string, currentUserId?: string): Promise<PublicUser & { isFollowingByMe: boolean }> {
@@ -90,7 +113,7 @@ export class UserService {
 
   public static async updateUser(userId: string, updateData: UpdateProfileDto, mediaPaths?: { profileImage?: string; bannerImage?: string }): Promise<PublicUser> {
     const sanitized: Partial<User> = {};
-    let isCriticalUpdate = false; // 🔥 ANTI-SPAM FLAG
+    let isCriticalUpdate = false;
 
     // 1. Extract Personal Info
     if (updateData.personal_info) {
@@ -143,7 +166,6 @@ export class UserService {
 
     if (!updated) throw new AppError(HTTP_STATUS.NOT_FOUND, "User not found during update");
 
-    // 🔥 ANTI-SPAM TRIGGER: Only send email if a critical field changed
     if (isCriticalUpdate) {
       notificationService.sendProfileUpdateEmail(updated.email, updated.username)
         .catch(err => console.error("Failed to send profile update email:", err));
@@ -220,7 +242,6 @@ export class UserService {
           .where(eq(users.id, currentUserId));
       });
 
-      // 🔥 FIX 3: Correctly using the `addInteractionJob` helper so BullMQ formats it properly!
       await addInteractionJob({
         type: NotificationType.FOLLOW,
         actorId: currentUserId,

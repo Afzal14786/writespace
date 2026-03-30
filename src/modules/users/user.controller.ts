@@ -32,6 +32,26 @@ export class UserController {
   }
 
   /**
+   * GET /api/v1/users/search?q=afzal
+   */
+  public static async searchUsers(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const query = req.query.q as string;
+      
+      const results = await UserService.searchUsers(query || "");
+      
+      new ApiResponse(
+        res, 
+        HTTP_STATUS.OK, 
+        "Search results retrieved", 
+        results
+      ).send();
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
    * GET /api/v1/users/me
    */
   public static async getMe(req: Request, res: Response, next: NextFunction): Promise<void> {

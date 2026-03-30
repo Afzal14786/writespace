@@ -16,7 +16,6 @@ interface AuthRequest<
 
 type UploadedFile = Express.Multer.File & { location?: string; path?: string };
 
-// 🔥 We explicitly map the payload to ensure TS accepts the dynamically added 'coverImage'
 type CreatePayloadWithExtras = CreatePostInput & {
   media: string[];
   codeSnippets: CodeSnippetSchema[];
@@ -52,7 +51,6 @@ class PostsController {
       const bannerFile = files?.["banner"]?.[0];
       if (bannerFile) {
         const rawUrl = bannerFile.location || `/${bannerFile.path!.replace(/\\/g, "/")}`;
-        // 🔥 TS now accepts this!
         payload.coverImage = {
           url: rawUrl,
           altText: payload.coverImage?.altText,
@@ -87,7 +85,6 @@ class PostsController {
     }
   };
 
-  // 🔥 Included authorId parameter check
   public getPosts = async (
     req: AuthRequest<unknown, { cursor?: string; limit?: string; authorId?: string }>,
     res: Response,
@@ -140,7 +137,6 @@ class PostsController {
       const bannerFile = files?.["banner"]?.[0];
       if (bannerFile) {
         const rawUrl = bannerFile.location || `/${bannerFile.path!.replace(/\\/g, "/")}`;
-        // 🔥 TS now accepts this!
         payload.coverImage = {
           url: rawUrl,
           altText: payload.coverImage?.altText,

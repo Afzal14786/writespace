@@ -26,7 +26,6 @@ export async function generateProfileOgImage(userData: {
   // 2. Fallbacks
   let avatarUrl = userData.avatar || `https://ui-avatars.com/api/?name=${userData.username}&size=256&background=1e293b&color=fff`;
 
-  // 🔥 FIX: Satori crashes on complex SVGs. We force DiceBear URLs to return PNGs instead!
   if (avatarUrl.includes('api.dicebear.com')) {
     avatarUrl = avatarUrl.replace('/svg', '/png');
   }

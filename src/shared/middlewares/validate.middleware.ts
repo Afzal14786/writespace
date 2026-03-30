@@ -1,16 +1,16 @@
 import { Request, Response, NextFunction } from "express";
-import { ZodObject, ZodError, ZodIssue } from "zod";
+import { AnyZodObject, ZodError, ZodIssue } from "zod";
 import { AppError } from "../utils/app.error";
 import { HTTP_STATUS } from "../constants/http-codes";
 
 export const validate =
-  (schema: ZodObject<any, any>) =>
-  (req: Request, res: Response, next: NextFunction) => {
+  (schema: AnyZodObject) =>
+  (req: Request, _res: Response, next: NextFunction): void => {
     try {
       schema.parse({
-        body: req.body,
-        query: req.query,
-        params: req.params,
+        body: req.body as unknown,
+        query: req.query as unknown,
+        params: req.params as unknown,
       });
       next();
     } catch (error) {
@@ -21,8 +21,8 @@ export const validate =
         next(
           new AppError(
             HTTP_STATUS.BAD_REQUEST,
-            `Validation Error: ${messages}`,
-          ),
+            `Validation Error: ${messages}`
+          )
         );
       } else {
         next(error);
