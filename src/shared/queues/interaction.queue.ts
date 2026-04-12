@@ -1,6 +1,6 @@
 import { Queue } from "bullmq";
-import env from "../../config/env";
-import { NotificationType } from "../../modules/notification/interface/notification.interface";
+import env from "@config/env";
+import { NotificationType } from "@modules/notification/interface/notification.interface";
 
 export interface IInteractionJob {
   type: NotificationType;

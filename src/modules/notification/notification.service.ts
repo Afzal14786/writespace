@@ -1,4 +1,4 @@
-import { addEmailJob } from "../../shared/queues/email.queue";
+import { addEmailJob } from "@shared/queues/email.queue";
 import { welcomeTemplate } from "./templates/welcome";
 import { passwordResetTemplate } from "./templates/password-reset";
 import { loginAlertTemplate } from "./templates/login-alert";
@@ -6,7 +6,7 @@ import { passwordUpdateTemplate } from "./templates/password-update";
 import { profileUpdateTemplate } from "./templates/profile-update";
 import { otpVerifyTemplate } from "./templates/otp-verify";
 import { NotificationType } from "./interface/notification.interface";
-import { addInteractionJob } from "../../shared/queues/interaction.queue";
+import { addInteractionJob } from "@shared/queues/interaction.queue";
 
 import { db } from "../../db";
 import { notifications } from "../../db/schema/notifications";

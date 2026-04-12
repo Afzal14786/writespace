@@ -1,8 +1,8 @@
 import { Request, Response, NextFunction } from "express";
 import { notificationService } from "./notification.service";
-import { ApiResponse } from "../../shared/utils/api-response";
-import { HTTP_STATUS } from "../../shared/constants/http-codes";
-import { AppError } from "../../shared/utils/app.error";
+import { ApiResponse } from "@shared/utils/api-response";
+import { HTTP_STATUS } from "@shared/constants/http-codes";
+import { AppError } from "@shared/utils/app.error";
 
 export class NotificationController {
   

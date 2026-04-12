@@ -1,9 +1,9 @@
 import { Router } from "express";
 import { UserController } from "./user.controller";
-import { authenticate, authorize } from "../../shared/middlewares/auth.middleware";
-import { validate } from "../../shared/middlewares/validate.middleware";
-import { parseFormDataJson } from "../../shared/middlewares/parse-form-data.middleware";
-import { upload } from "../../shared/middlewares/upload.middleware";
+import { authenticate, authorize } from "@shared/middlewares/auth.middleware";
+import { validate } from "@shared/middlewares/validate.middleware";
+import { parseFormDataJson } from "@shared/middlewares/parse-form-data.middleware";
+import { upload } from "@shared/middlewares/upload.middleware";
 import { UpdateProfileSchema } from "./dtos/update-profile.dto";
 
 const router = Router();

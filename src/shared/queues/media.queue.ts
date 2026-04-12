@@ -1,5 +1,5 @@
 import { Queue } from "bullmq";
-import env from "../../config/env";
+import env from "@config/env";
 
 // Parse the REDIS_URL from env.ts to extract host and port for BullMQ
 const redisUrl = new URL(env.REDIS_URL);

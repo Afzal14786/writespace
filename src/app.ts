@@ -2,8 +2,6 @@ import express from "express";
 import dotenv from "dotenv";
 import cookieParser from "cookie-parser";
 import { connectRedis } from "./config/redis";
-import swaggerUi from "swagger-ui-express";
-import swaggerSpec from "./config/swagger";
 import { postsRoutes } from "./modules/posts/posts.routes";
 import { authRoutes } from "./modules/auth/auth.routes";
 import { userRoutes } from "./modules/users/user.routes";
@@ -41,8 +39,6 @@ configurePassport();
 app.use(passport.initialize());
 app.use(botInterceptor);
 // app.use("/api/v1", apiLimiter);
-
-app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
 app.use("/api/v1/auth", apiLimiter, authRoutes);
 app.use("/api/v1/posts", postsRoutes);

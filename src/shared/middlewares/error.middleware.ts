@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import { AppError } from "../utils/app.error";
 import { HTTP_STATUS } from "../constants/http-codes";
 import { ZodError, ZodIssue } from "zod";
-import logger from "../../config/logger"; // 🔥 FIX 1: Changed to default import
+import logger from "@config/logger";
 
 // 1. Define an interface for PostgreSQL Database Errors
 interface PgError extends Error {

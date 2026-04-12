@@ -1,10 +1,10 @@
 import { Request, Response, NextFunction } from "express";
 import { interactionsService } from "./interactions.service";
-import { ApiResponse } from "../../shared/utils/api-response";
-import { HTTP_STATUS } from "../../shared/constants/http-codes";
+import { ApiResponse } from "@shared/utils/api-response";
+import { HTTP_STATUS } from "@shared/constants/http-codes";
 import { AddCommentDto } from "./dtos/add-comment.dto";
 import type { PublicUser } from "../users/interface/user.interface";
-import { AppError } from "../../shared/utils/app.error";
+import { AppError } from "@shared/utils/app.error";
 
 interface AuthRequest<
   ReqBody = unknown,

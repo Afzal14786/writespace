@@ -2,8 +2,8 @@ import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import { AppError } from "../utils/app.error";
 import { HTTP_STATUS } from "../constants/http-codes";
-import { IJwtPayload } from "../../modules/auth/interface/auth.interface";
-import env from "../../config/env";
+import { IJwtPayload } from "@modules/auth/interface/auth.interface";
+import env from "@config/env";
 
 export const authenticate = async (
   req: Request,
@@ -49,7 +49,7 @@ export const authenticate = async (
  * which contains { id, role } at the top level.
  */
 export const authorize = (...allowedRoles: string[]) => {
-  return (req: Request, res: Response, next: NextFunction) => {
+  return (req: Request<{role: string}>, res: Response, next: NextFunction) => {
     const userRole = req.user?.role;
 
     if (!userRole) {

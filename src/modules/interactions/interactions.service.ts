@@ -3,12 +3,12 @@ import { db } from "../../db";
 import { comments, shares, posts, users, likes } from "../../db/schema";
 import { commentLikes } from "../../db/schema/comment-likes"; 
 import { AddCommentDto } from "./dtos/add-comment.dto";
-import { AppError } from "../../shared/utils/app.error";
-import { HTTP_STATUS } from "../../shared/constants/http-codes";
-import { addInteractionJob } from "../../shared/queues/interaction.queue";
-import { NotificationType } from "../../modules/notification/interface/notification.interface";
+import { AppError } from "@shared/utils/app.error";
+import { HTTP_STATUS } from "@shared/constants/http-codes";
+import { addInteractionJob } from "@shared/queues/interaction.queue";
+import { NotificationType } from "@modules/notification/interface/notification.interface";
 import { notificationService } from "../notification/notification.service";
-import logger from "../../config/logger";
+import logger from "@config/logger";
 
 class InteractionsService {
   public async createComment(

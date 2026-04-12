@@ -6,13 +6,13 @@ import { PostStatus } from "./interfaces/post.interface";
 import { CreatePostInput } from "./dtos/create-post.dto";
 import slugify from "slugify";
 import sanitizeHtml from "sanitize-html";
-import { AppError } from "../../shared/utils/app.error";
-import { HTTP_STATUS } from "../../shared/constants/http-codes";
-import env from "../../config/env";
+import { AppError } from "@shared/utils/app.error";
+import { HTTP_STATUS } from "@shared/constants/http-codes";
+import env from "@config/env";
 import { interactionsService } from "../interactions/interactions.service";
-import { addInteractionJob } from "../../shared/queues/interaction.queue";
-import { NotificationType } from "../../modules/notification/interface/notification.interface";
-import { addMediaCleanupJob } from "../../shared/queues/media.queue";
+import { addInteractionJob } from "@shared/queues/interaction.queue";
+import { NotificationType } from "@modules/notification/interface/notification.interface";
+import { addMediaCleanupJob } from "@shared/queues/media.queue";
 
 interface CoverImageData {
   url: string;

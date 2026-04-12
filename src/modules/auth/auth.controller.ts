@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import { authService } from "./auth.service";
-import { ApiResponse } from "../../shared/utils/api-response";
-import { HTTP_STATUS } from "../../shared/constants/http-codes";
+import { ApiResponse } from "@shared/utils/api-response";
+import { HTTP_STATUS } from "@shared/constants/http-codes";
 import { RegisterInput } from "./dtos/register.dto";
 import { LoginInput } from "./dtos/login.dto";
 import { VerifyOtpInput } from "./dtos/verify-otp.dto";
@@ -10,8 +10,8 @@ import {
   ResetPasswordInput,
 } from "./dtos/password-reset.dto";
 import { UpdatePasswordInput } from "./dtos/update-password.dto";
-import { AppError } from "../../shared/utils/app.error";
-import env from "../../config/env";
+import { AppError } from "@shared/utils/app.error";
+import env from "@config/env";
 
 // Cookie Config (HttpOnly)
 const REFRESH_COOKIE_OPTIONS = {

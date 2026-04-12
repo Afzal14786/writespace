@@ -2,12 +2,12 @@ import { eq, and, sql, ilike, or } from "drizzle-orm";
 import { db } from "../../db";
 import { users, type User } from "../../db/schema/users";
 import { follows } from "../../db/schema/follows";
-import { AppError } from "../../shared/utils/app.error";
-import { HTTP_STATUS } from "../../shared/constants/http-codes";
+import { AppError } from "@shared/utils/app.error";
+import { HTTP_STATUS } from "@shared/constants/http-codes";
 import type { UpdateProfileDto } from "./dtos/update-profile.dto";
 import type { PublicUser } from "./interface/user.interface";
 
-import { addInteractionJob } from "../../shared/queues/interaction.queue";
+import { addInteractionJob } from "@shared/queues/interaction.queue";
 import { NotificationType } from "../notification/interface/notification.interface";
 import { notificationService } from "../notification/notification.service";
 

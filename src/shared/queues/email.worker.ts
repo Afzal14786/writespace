@@ -1,8 +1,8 @@
 import { Worker } from "bullmq";
 import { mailer } from "../infra/mailer";
-import env from "../../config/env";
-import { IEmailPayload } from "../../modules/notification/interface/email.interface";
-import logger from "../../config/logger";
+import env from "@config/env";
+import { IEmailPayload } from "@modules/notification/interface/email.interface";
+import logger from "@config/logger";
 
 // 1. Create the Worker instance
 export const emailWorker = new Worker<IEmailPayload>(

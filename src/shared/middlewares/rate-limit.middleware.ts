@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction, RequestHandler } from "express";
 import rateLimit from "express-rate-limit";
 import RedisStore from "rate-limit-redis";
-import { client } from "../../config/redis";
+import { client } from "@config/redis";
 import { HTTP_STATUS } from "../constants/http-codes";
 
 // 1. FACTORY PATTERN: Generate a unique store for each limiter to fix ERR_ERL_STORE_REUSE

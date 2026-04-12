@@ -1,8 +1,8 @@
 import { Request, Response, NextFunction } from "express";
 import { postService } from "./posts.service";
 import { CreatePostInput } from "./dtos/create-post.dto";
-import { ApiResponse } from "../../shared/utils/api-response";
-import { HTTP_STATUS } from "../../shared/constants/http-codes";
+import { ApiResponse } from "@shared/utils/api-response";
+import { HTTP_STATUS } from "@shared/constants/http-codes";
 import type { CodeSnippetSchema } from "../../db/schema/posts";
 import type { PublicUser } from "../users/interface/user.interface";
 

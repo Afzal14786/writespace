@@ -1,10 +1,10 @@
 import { Worker, type Job } from "bullmq";
-import env from "../../config/env";
+import env from "@config/env";
 import { db } from "../../db";
 import { notifications, users } from "../../db/schema";
 import { eq } from "drizzle-orm";
 import { type IInteractionJob } from "./interaction.queue";
-import logger from "../../config/logger";
+import logger from "@config/logger";
 
 export const interactionWorker = new Worker<IInteractionJob>(
   "interaction-queue",

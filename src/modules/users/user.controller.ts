@@ -1,9 +1,9 @@
 import { Request, Response, NextFunction } from "express";
 import { UserService } from "./user.service";
-import { ApiResponse } from "../../shared/utils/api-response";
-import { HTTP_STATUS } from "../../shared/constants/http-codes";
-import { AppError } from "../../shared/utils/app.error";
-import { generateProfileOgImage } from '../../shared/utils/og-generator';
+import { ApiResponse } from "@shared/utils/api-response";
+import { HTTP_STATUS } from "@shared/constants/http-codes";
+import { AppError } from "@shared/utils/app.error";
+import { generateProfileOgImage } from '@shared/utils/og-generator';
 import type { UpdateProfileDto } from "./dtos/update-profile.dto";
 
 export class UserController {

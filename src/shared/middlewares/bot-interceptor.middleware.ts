@@ -3,7 +3,7 @@ import { db } from '../../db';
 import { posts } from '../../db/schema/posts';
 import { users } from '../../db/schema/users';
 import { eq } from 'drizzle-orm';
-import logger from '../../config/logger';
+import logger from '@config/logger';
 
 export const botInterceptor = async (req: Request, res: Response, next: NextFunction) => {
   const userAgent = req.headers['user-agent']?.toLowerCase() || '';

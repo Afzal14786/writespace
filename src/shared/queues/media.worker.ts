@@ -1,8 +1,8 @@
 import { Worker, Job } from "bullmq";
 import fs from "fs/promises";
 import path from "path";
-import logger from "../../config/logger";
-import env from "../../config/env";
+import logger from "@config/logger";
+import env from "@config/env";
 
 // Parse the REDIS_URL from env.ts to extract host and port for BullMQ
 const redisUrl = new URL(env.REDIS_URL);

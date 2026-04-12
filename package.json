@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node dist/server.js",
     "dev": "nodemon",
-    "build": "tsc",
+    "build": "tsc && tsc-alias",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit push",
     "studio": "drizzle-kit studio",
@@ -51,8 +51,6 @@
     "satori": "^0.26.0",
     "satori-html": "^0.3.2",
     "slugify": "^1.6.6",
-    "swagger-jsdoc": "^6.2.8",
-    "swagger-ui-express": "^5.0.1",
     "validator": "^13.15.26",
     "zario": "^0.7.0",
     "zod": "^3.23.8"
@@ -75,8 +73,6 @@
     "@types/pg": "^8.16.0",
     "@types/sanitize-html": "^2.16.0",
     "@types/supertest": "^6.0.2",
-    "@types/swagger-jsdoc": "^6.0.4",
-    "@types/swagger-ui-express": "^4.1.8",
     "drizzle-kit": "^0.31.8",
     "eslint": "^9.39.2",
     "eslint-config-prettier": "^10.1.8",
@@ -88,6 +84,7 @@
     "supertest": "^6.3.4",
     "ts-jest": "^29.1.2",
     "ts-node": "^10.9.2",
+    "tsc-alias": "^1.8.16",
     "tsconfig-paths": "^4.2.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.52.0"

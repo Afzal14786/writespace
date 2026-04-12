@@ -6,7 +6,7 @@ import fs from "fs";
 import { Request } from "express";
 import { AppError } from "../utils/app.error";
 import { HTTP_STATUS } from "../constants/http-codes";
-import env from "../../config/env";
+import env from "@config/env";
 
 /**
  * @module UploadMiddleware
