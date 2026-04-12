@@ -6,7 +6,9 @@ const config: Config = {
   rootDir: './',
   testMatch: ['<rootDir>/test/**/*.test.ts', '<rootDir>/src/**/*.spec.ts'],
   moduleNameMapper: {
-    '^@/(.*)$': '<rootDir>/src/$1',
+    '^@modules/(.*)$': '<rootDir>/src/modules/$1',
+    '^@config/(.*)$': '<rootDir>/src/config/$1',
+    '^@shared/(.*)$': '<rootDir>/src/shared/$1',
   },
   setupFilesAfterEnv: [],
   verbose: true,
