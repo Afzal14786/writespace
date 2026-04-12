@@ -1,0 +1,43 @@
+{
+  "repo_notes": [
+    {
+      "content": "WriteSpace is a production-grade backend built with Express and TypeScript. It utilizes vertical slicing where each module (auth, posts, users, interactions, notifications) contains its own controller, service, and routes. Shared infrastructure is isolated. It heavily relies on PostgreSQL managed by Drizzle ORM (using composite primary keys and polymorphic relations) and Redis/BullMQ for asynchronous tasks. Do not just list endpoints; focus on the data flow, the dependency inversion, and the architectural decisions outlined in DEVELOPER.md and SECURITY.md."
+    }
+  ],
+  "pages": [
+    {
+      "title": "System Architecture Overview",
+      "purpose": "Explain the vertical slicing pattern and dependency inversion. Map the request lifecycle from the Express app.ts (through Helmet, CORS, Bot Interceptor, and Rate Limiter) down to the specific module controllers and services."
+    },
+    {
+      "title": "Local Development & Docker",
+      "purpose": "Detail the local setup using Bun, including the docker-compose.yml configuration for PostgreSQL 15-alpine and Redis 7.2-alpine, and the database migration commands (db:generate, db:migrate)."
+    },
+    {
+      "title": "Database Schema (Drizzle ORM)",
+      "purpose": "Document the relational design. Highlight the use of UUID primary keys, soft deletes, composite primary keys (e.g., in likes and follows), and polymorphic relations for the likes table.",
+      "parent": "System Architecture Overview"
+    },
+    {
+      "title": "Authentication & Security Model",
+      "purpose": "Detail the dual-token JWT strategy (15m access in memory, 7d refresh in Redis), password hashing (bcrypt), Passport.js OAuth flows, and the strict rate-limiting and bot interception middleware layer."
+    },
+    {
+      "title": "Async Processing & Queues",
+      "purpose": "Explain the BullMQ architecture running on Redis. Detail how the notificationQueue offloads email (Nodemailer) and in-app notifications from the main thread to prevent blocking API responses.",
+      "parent": "System Architecture Overview"
+    },
+    {
+      "title": "Media Handling & AWS S3",
+      "purpose": "Describe the multipart form-data upload process, highlighting how Multer processes temporary files before orchestrating uploads to AWS S3 within the post service."
+    },
+    {
+      "title": "Error Handling & Validation",
+      "purpose": "Explain the global error handler middleware, the custom AppError class for standardized HTTP codes, and the use of Zod schemas for strict request payload validation."
+    },
+    {
+      "title": "Developer Guide: Adding Features",
+      "purpose": "Provide the step-by-step framework for adding a new vertical slice module, from creating the Zod schemas and Drizzle tables to implementing the service, controller, and registering routes."
+    }
+  ]
+}
