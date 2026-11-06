@@ -1,141 +1,78 @@
-import { PostCoverImage, PostMediaItem } from "../interfaces/post.interface";
+import type { NewPostMedia, PostMedia } from "../../../db/schema";
+
+import type { PostMediaItem } from "../interfaces/post.interface";
+
 import { AppError } from "@shared/utils/app.error";
 import { HTTP_STATUS } from "@shared/constants/http-codes";
 
-export interface PostMediaState {
-  media: PostMediaItem[];
-  coverImage?: PostCoverImage;
-}
-
-export interface PostMediaDbState {
-  media: string[];
-  mediaPublicIds: string[];
-  coverImageUrl: string | null;
-  coverImagePublicId: string | null;
-  coverImageAltText: string | null;
-  coverImageCredit: string | null;
-}
+export const MAX_POST_MEDIA = 5;
 
 export interface PostMediaDiff {
-  keptMedia: PostMediaItem[];
+  /** Existing attachments that will remain on the Post. */
+  keptMedia: PostMedia[];
+
+  /** Newly uploaded attachments that need database records. */
   addedMedia: PostMediaItem[];
-  removedMedia: PostMediaItem[];
-  oldCoverImage?: PostCoverImage;
-  newCoverImage?: PostCoverImage;
-  coverImageChanged: boolean;
+
+  /** Existing attachments that will be removed. */
+  removedMedia: PostMedia[];
 }
 
 class PostMediaService {
   /**
-   * Convert the current database representation into the
-   * application's canonical PostMediaItem representation.
+   * Convert database records into an ordered media collection.
+   *
+   * A database row can have a null publicId because the schema allows
+   * attachments that are not managed by Cloudinary.
    */
-  public fromDatabase(
-    media: string[] | null | undefined,
-    mediaPublicIds: string[] | null | undefined,
-    coverImageUrl: string | null | undefined,
-    coverImagePublicId: string | null | undefined,
-    coverImageAltText: string | null | undefined,
-    coverImageCredit: string | null | undefined,
-  ): PostMediaState {
-    const urls = media ?? [];
-    const publicIds = mediaPublicIds ?? [];
+  public fromDatabase(media: PostMedia[] | null | undefined): PostMedia[] {
+    const records = [...(media ?? [])].sort(
+      (first, second) => first.position - second.position,
+    );
 
-    this.assertMatchingMediaArrays(urls, publicIds);
-
-    const mediaItems: PostMediaItem[] = urls.map((url, index) => {
-      const item: PostMediaItem = {
-        url,
-        publicId: publicIds[index],
-      };
-
-      this.assertValidMediaItem(item);
-
-      return item;
-    });
-
-    let coverImage: PostCoverImage | undefined;
-
-    if (coverImageUrl || coverImagePublicId) {
-      if (!coverImageUrl || !coverImagePublicId) {
-        throw new Error(
-          "Post cover image is inconsistent: both URL and publicId are required",
-        );
-      }
-
-      coverImage = {
-        url: coverImageUrl,
-        publicId: coverImagePublicId,
-        ...(coverImageAltText ? { altText: coverImageAltText } : {}),
-        ...(coverImageCredit ? { credit: coverImageCredit } : {}),
-      };
+    for (const item of records) {
+      this.assertValidDatabaseItem(item);
     }
 
-    return {
-      media: mediaItems,
-      coverImage,
-    };
+    return records;
   }
 
   /**
-   * Convert the canonical application representation back into
-   * the current database representation.
+   * Build a media item from the upload layer.
+   *
+   * Newly uploaded Cloudinary media must have a publicId so that
+   * the application can delete the asset when its attachment is removed.
    */
-  public toDatabase(state: PostMediaState): PostMediaDbState {
-    this.validateMedia(state.media);
-
-    const media = state.media.map((item) => item.url);
-    const mediaPublicIds = state.media.map((item) => item.publicId);
-
-    this.assertMatchingMediaArrays(media, mediaPublicIds);
-
-    return {
-      media,
-      mediaPublicIds,
-      coverImageUrl: state.coverImage?.url ?? null,
-      coverImagePublicId: state.coverImage?.publicId ?? null,
-      coverImageAltText: state.coverImage?.altText ?? null,
-      coverImageCredit: state.coverImage?.credit ?? null,
-    };
-  }
-
-  /**
-   * Build a media item from the result returned by the upload layer.
-   */
-  public createMediaItem(url: string, publicId: string): PostMediaItem {
-    this.assertValidMediaItem({ url, publicId });
-
-    return {
-      url,
-      publicId,
-    };
-  }
-
-  /**
-   * Build a cover image from the result returned by the upload layer.
-   */
-  public createCoverImage(
+  public createMediaItem(
     url: string,
     publicId: string,
-    altText?: string,
-    credit?: string,
-  ): PostCoverImage {
-    const coverImage: PostCoverImage = {
+    altText?: string | null,
+  ): PostMediaItem {
+    const item: PostMediaItem = {
       url,
       publicId,
-      ...(altText ? { altText } : {}),
-      ...(credit ? { credit } : {}),
+      ...(altText !== undefined ? { altText } : {}),
     };
 
-    this.assertValidMediaItem(coverImage);
+    this.assertValidMediaItem(item);
 
-    return coverImage;
+    return item;
   }
 
   /**
-   * Validate a collection of media items.
+   * Validate a collection of newly uploaded media.
+   *
+   * This enforces the maximum of five attachments and prevents the same
+   * Cloudinary asset from being attached more than once.
    */
   public validateMedia(media: PostMediaItem[]): void {
+    if (media.length > MAX_POST_MEDIA) {
+      throw new AppError(
+        HTTP_STATUS.BAD_REQUEST,
+        `A Post can have a maximum of ${MAX_POST_MEDIA} images`,
+      );
+    }
+
     const publicIds = new Set<string>();
 
     for (const item of media) {
@@ -144,7 +81,7 @@ class PostMediaService {
       if (publicIds.has(item.publicId)) {
         throw new AppError(
           HTTP_STATUS.BAD_REQUEST,
-          `Duplicate media publicId detected: ${item.publicId}`,
+          "Duplicate media attachment detected",
         );
       }
 
@@ -153,99 +90,138 @@ class PostMediaService {
   }
 
   /**
-   * Calculate what changed between the old and new post media.
+   * Calculate the result of removing existing attachments and adding
+   * newly uploaded attachments.
    *
-   * Media is identified by publicId because it is the stable
-   * provider-side identifier of the asset.
+   * Existing records are identified by their database IDs, not by
+   * Cloudinary publicIds. This is important because publicId is nullable
+   * in the database and is an external storage identifier.
    */
-  public diff(previous: PostMediaState, next: PostMediaState): PostMediaDiff {
-    this.validateMedia(previous.media);
-    this.validateMedia(next.media);
+  public diff(
+    previousMedia: PostMedia[],
+    addedMedia: PostMediaItem[],
+    removeMediaIds: string[] = [],
+  ): PostMediaDiff {
+    const removeIds = new Set(removeMediaIds);
 
-    const previousById = new Map(
-      previous.media.map((item) => [item.publicId, item]),
-    );
+    if (removeIds.size !== removeMediaIds.length) {
+      throw new AppError(
+        HTTP_STATUS.BAD_REQUEST,
+        "Duplicate media IDs were provided for removal",
+      );
+    }
 
-    const nextById = new Map(next.media.map((item) => [item.publicId, item]));
+    const existingIds = new Set(previousMedia.map((item) => item.id));
 
-    const keptMedia: PostMediaItem[] = [];
-    const addedMedia: PostMediaItem[] = [];
-    const removedMedia: PostMediaItem[] = [];
-
-    for (const item of next.media) {
-      if (previousById.has(item.publicId)) {
-        keptMedia.push(item);
-      } else {
-        addedMedia.push(item);
+    for (const id of removeIds) {
+      if (!existingIds.has(id)) {
+        throw new AppError(
+          HTTP_STATUS.BAD_REQUEST,
+          "One or more media attachments do not belong to this Post",
+        );
       }
     }
 
-    for (const item of previous.media) {
-      if (!nextById.has(item.publicId)) {
-        removedMedia.push(item);
-      }
-    }
+    this.validateMedia(addedMedia);
 
-    const coverImageChanged = !this.areSameMediaItem(
-      previous.coverImage,
-      next.coverImage,
-    );
+    const keptMedia = previousMedia.filter((item) => !removeIds.has(item.id));
+
+    const removedMedia = previousMedia.filter((item) => removeIds.has(item.id));
+
+    if (keptMedia.length + addedMedia.length > MAX_POST_MEDIA) {
+      throw new AppError(
+        HTTP_STATUS.BAD_REQUEST,
+        `A Post can have a maximum of ${MAX_POST_MEDIA} images`,
+      );
+    }
 
     return {
       keptMedia,
       addedMedia,
       removedMedia,
-      oldCoverImage: previous.coverImage,
-      newCoverImage: next.coverImage,
-      coverImageChanged,
     };
   }
 
   /**
-   * Determine whether two media assets represent the same asset.
+   * Convert newly uploaded media into database insert records.
+   *
+   * `startingPosition` allows the command service to append new
+   * attachments after the existing ones.
    */
-  public areSameMediaItem(
-    first?: PostMediaItem,
-    second?: PostMediaItem,
-  ): boolean {
-    if (!first && !second) {
-      return true;
+  public toDatabase(
+    postId: string,
+    media: PostMediaItem[],
+    startingPosition = 0,
+  ): NewPostMedia[] {
+    if (!postId.trim()) {
+      throw new AppError(
+        HTTP_STATUS.INTERNAL_SERVER_ERROR,
+        "Post ID is required when creating media records",
+      );
     }
 
-    if (!first || !second) {
-      return false;
+    if (!Number.isInteger(startingPosition) || startingPosition < 0) {
+      throw new AppError(
+        HTTP_STATUS.INTERNAL_SERVER_ERROR,
+        "Media position must be a non-negative integer",
+      );
     }
 
-    return first.publicId === second.publicId;
+    this.validateMedia(media);
+
+    return media.map((item, index) => ({
+      postId,
+      url: item.url,
+      publicId: item.publicId,
+      altText: item.altText ?? null,
+      position: startingPosition + index,
+    }));
   }
 
   /**
-   * Return all Cloudinary publicIds that should be cleaned up
-   * after a media state change.
+   * Return Cloudinary publicIds for assets that should be deleted
+   * after their database records have been successfully removed.
    *
-   * Cover image is intentionally handled separately from body
-   * media so callers can decide when/how it should be removed.
+   * Records without a publicId are intentionally skipped because
+   * they are not associated with a Cloudinary asset.
    */
   public getRemovedPublicIds(diff: PostMediaDiff): string[] {
-    return diff.removedMedia.map((item) => item.publicId);
+    return [
+      ...new Set(
+        diff.removedMedia
+          .map((item) => item.publicId)
+          .filter((publicId): publicId is string => Boolean(publicId)),
+      ),
+    ];
   }
 
   private assertValidMediaItem(item: PostMediaItem): void {
-    if (!item.url || !item.url.trim()) {
+    if (!item.url?.trim()) {
       throw new AppError(HTTP_STATUS.BAD_REQUEST, "Media URL is required");
     }
 
-    if (!item.publicId || !item.publicId.trim()) {
-      throw new AppError(HTTP_STATUS.BAD_REQUEST, "Media publicId is required");
-    }
-
-    if (
-      item.url.startsWith("http://") === false &&
-      item.url.startsWith("https://") === false
-    ) {
+    if (!item.publicId?.trim()) {
       throw new AppError(
         HTTP_STATUS.BAD_REQUEST,
-        "Media URL must be an HTTP or HTTPS URL",
+        "Media publicId is required for uploaded media",
+      );
+    }
+
+    let parsedUrl: URL;
+
+    try {
+      parsedUrl = new URL(item.url);
+    } catch {
+      throw new AppError(
+        HTTP_STATUS.BAD_REQUEST,
+        "Media URL must be a valid HTTP or HTTPS URL",
+      );
+    }
+
+    if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+      throw new AppError(
+        HTTP_STATUS.BAD_REQUEST,
+        "Media URL must use HTTP or HTTPS",
       );
     }
 
@@ -260,14 +236,33 @@ class PostMediaService {
     }
   }
 
-  private assertMatchingMediaArrays(
-    media: string[],
-    mediaPublicIds: string[],
-  ): void {
-    if (media.length !== mediaPublicIds.length) {
+  /**
+   * Validate a persisted row. Unlike a newly uploaded item, a database
+   * record is allowed to have a null publicId.
+   */
+  private assertValidDatabaseItem(item: PostMedia): void {
+    let parsedUrl: URL;
+
+    try {
+      parsedUrl = new URL(item.url);
+    } catch {
       throw new AppError(
         HTTP_STATUS.INTERNAL_SERVER_ERROR,
-        "Post media URLs and publicIds must contain the same number of items",
+        `Invalid media URL stored for attachment ${item.id}`,
+      );
+    }
+
+    if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+      throw new AppError(
+        HTTP_STATUS.INTERNAL_SERVER_ERROR,
+        `Invalid media URL stored for attachment ${item.id}`,
+      );
+    }
+
+    if (!Number.isInteger(item.position) || item.position < 0) {
+      throw new AppError(
+        HTTP_STATUS.INTERNAL_SERVER_ERROR,
+        `Invalid media position stored for attachment ${item.id}`,
       );
     }
   }
