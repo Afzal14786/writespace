@@ -1,44 +1,32 @@
 import { pgTable, primaryKey, timestamp, uuid } from "drizzle-orm/pg-core";
 
-import { users } from "./users";
 import { comments } from "./comments";
-import { reactionTypeEnum } from "./post-reactions";
+import { reactionTypeEnum } from "./content-reactions";
+import { users } from "./users";
 
+/** One current reaction per user per comment. */
 export const commentReactions = pgTable(
   "comment_reactions",
   {
     commentId: uuid("comment_id")
       .notNull()
-      .references(() => comments.id, {
-        onDelete: "cascade",
-      }),
+      .references(() => comments.id, { onDelete: "cascade" }),
 
     userId: uuid("user_id")
       .notNull()
-      .references(() => users.id, {
-        onDelete: "cascade",
-      }),
+      .references(() => users.id, { onDelete: "cascade" }),
 
     reactionType: reactionTypeEnum("reaction_type").notNull(),
 
-    createdAt: timestamp("created_at", {
-      withTimezone: true,
-    })
+    createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
-
-    updatedAt: timestamp("updated_at", {
-      withTimezone: true,
-    })
+    updatedAt: timestamp("updated_at", { withTimezone: true })
       .defaultNow()
       .notNull()
       .$onUpdate(() => new Date()),
   },
-  (table) => [
-    primaryKey({
-      columns: [table.commentId, table.userId],
-    }),
-  ],
+  (table) => [primaryKey({ columns: [table.commentId, table.userId] })],
 );
 
 export type CommentReaction = typeof commentReactions.$inferSelect;
