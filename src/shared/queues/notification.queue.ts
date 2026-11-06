@@ -1,9 +1,11 @@
 import { Queue } from "bullmq";
 import env from "@config/env";
 import { bullmqRedisConnection } from "@config/bullmq";
-import { NotificationType } from "@modules/notification/interface/notification.interface";
+import type { NotificationType } from "@modules/notification/interface/notification.interface";
 
-export interface IInteractionJob {
+export const NOTIFICATION_QUEUE_NAME = "notification-queue";
+
+export interface NotificationJobData {
   type: NotificationType;
   recipientId: string;
   actorId?: string;
@@ -11,23 +13,24 @@ export interface IInteractionJob {
   message: string;
 }
 
-export const interactionQueue = new Queue<IInteractionJob>(
-  "interaction-queue",
+export const notificationQueue = new Queue<NotificationJobData>(
+  NOTIFICATION_QUEUE_NAME,
   {
     connection: bullmqRedisConnection,
+    defaultJobOptions: {
+      attempts: env.NOTIFICATION_QUEUE_ATTEMPTS,
+      backoff: {
+        type: "fixed",
+        delay: env.QUEUE_BACKOFF_DELAY_MS,
+      },
+      removeOnComplete: true,
+      removeOnFail: false,
+    },
   },
 );
 
-export const addInteractionJob = async (
-  job: IInteractionJob,
+export const addNotificationJob = async (
+  job: NotificationJobData,
 ): Promise<void> => {
-  await interactionQueue.add("process-interaction", job, {
-    attempts: env.INTERACTION_QUEUE_ATTEMPTS,
-    backoff: {
-      type: "fixed",
-      delay: env.QUEUE_BACKOFF_DELAY_MS,
-    },
-    removeOnComplete: true,
-    removeOnFail: false,
-  });
+  await notificationQueue.add("process-notification", job);
 };
