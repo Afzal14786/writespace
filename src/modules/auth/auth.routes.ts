@@ -9,12 +9,19 @@ import {
   forgotPasswordSchema,
   resetPasswordSchema,
 } from "./dtos/password-reset.dto";
-import { updatePasswordSchema } from "./dtos/update-password.dto";
+import { UserController } from "@modules/users/user.controller";
+import { updatePasswordSchema } from "@modules/users/dtos/update-password.dto";
 import { authenticate } from "@shared/middlewares/auth.middleware";
 import {
   loginLimiter,
+  loginEmailLimiter,
   registerLimiter,
-  emailActionLimiter,
+  registerEmailLimiter,
+  emailVerificationLimiter,
+  emailVerificationEmailLimiter,
+  forgotPasswordLimiter,
+  forgotPasswordEmailLimiter,
+  resetPasswordLimiter,
 } from "@shared/middlewares/rate-limit.middleware";
 
 const router = Router();
@@ -25,13 +32,15 @@ router.post(
   "/register",
   registerLimiter,
   validate(registerSchema),
+  registerEmailLimiter,
   authController.register,
 );
 
 router.post(
   "/verify-email",
-  emailActionLimiter,
+  emailVerificationLimiter,
   validate(verifyOtpSchema),
+  emailVerificationEmailLimiter,
   authController.verifyEmail,
 );
 
@@ -39,28 +48,41 @@ router.post(
   "/login",
   loginLimiter,
   validate(loginSchema),
+  loginEmailLimiter,
   authController.login,
 );
 
 router.post(
   "/forgot-password",
-  emailActionLimiter,
-  authenticate,
+  forgotPasswordLimiter,
   validate(forgotPasswordSchema),
+  forgotPasswordEmailLimiter,
   authController.forgotPassword,
 );
+
+/**
+ * Resetting a password
+ */
 router.post(
   "/reset-password",
-  emailActionLimiter,
+  resetPasswordLimiter,
   validate(resetPasswordSchema),
   authController.resetPassword,
 );
 
+/**
+ * Backward-compatible endpoint.
+ *
+ * The canonical password-change endpoint is:
+ * PUT /api/v1/users/me/password
+ *
+ * Password-change logic is owned by the Users module.
+ */
 router.put(
   "/update-password",
   authenticate,
   validate(updatePasswordSchema),
-  authController.updatePassword,
+  UserController.updatePassword,
 );
 
 router.post("/refresh-token", authController.refreshToken);
