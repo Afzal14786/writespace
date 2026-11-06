@@ -1,0 +1,57 @@
+services:
+    # Writespace API - Production
+  
+  api:
+    build:
+      context: .
+      target: production
+
+    image: writespace-api:production
+
+    container_name: writespace-api
+
+    restart: unless-stopped
+    init: true
+
+    # Production secrets and connection strings.
+    env_file:
+      - .env.production
+
+    environment:
+      NODE_ENV: production
+      PORT: "8000"
+
+    ports:
+      # Keep the API private behind a reverse proxy such as Nginx.
+      - "127.0.0.1:${HOST_PORT:-8000}:8000"
+
+    volumes:
+      # Persist application-generated files.
+      - api_logs:/app/logs
+      - api_uploads:/app/uploads
+
+    stop_grace_period: 30s
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "const s=require('node:net').connect(8000,'127.0.0.1');s.on('connect',()=>{s.end();process.exit(0)});s.on('error',()=>process.exit(1));"
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+
+volumes:
+  api_logs:
+  api_uploads:

@@ -1,35 +1,136 @@
-
 services:
+    # Writespace API - Development  
   api:
-    build: .
-    ports:
-      - "8000:8000"
+    build:
+      context: .
+      target: development
+
+    container_name: writespace-api-dev
+
+    restart: unless-stopped
+    init: true
+
     env_file:
       - .env
+
     environment:
       NODE_ENV: development
-      PORT: 5000
-      DATABASE_URL: postgresql://admin:secret@postgres_db:5432/writespace
-      REDIS_URL: redis://redis_cache:6379
-    depends_on:
-      - postgres_db
-      - redis_cache
+      PORT: "8000"
 
-  postgres_db:
-    image: postgres:15-alpine
+      # Connect to PostgreSQL using Docker's service DNS.
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-writespace}:${POSTGRES_PASSWORD:-writespace_dev_password}@postgres:5432/${POSTGRES_DB:-writespace}"
+
+      # Connect to the Redis container.
+      REDIS_URL: redis://redis:6379
+      REDIS_PASSWORD: ""
+
+      TRUST_PROXY_HOPS: "0"
+
     ports:
-      - "5433:5432"
-    environment:
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: secret
-      POSTGRES_DB: writespace
+      - "127.0.0.1:${HOST_PORT:-8000}:8000"
+
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      # Share source code with the container.
+      # Changes on your machine become visible inside Docker.
+      - type: bind
+        source: ./src
+        target: /app/src
 
-  redis_cache:
-    image: redis:alpine
+      # Keep application logs and uploaded files on the host.
+      - ./logs:/app/logs
+      - ./uploads:/app/uploads
+
+    # Wait until PostgreSQL and Redis are ready.
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+    # Nodemon polls for changes, which is useful with Docker Desktop
+    # and Windows bind mounts.
+    command:
+      [
+        "npm",
+        "run",
+        "dev",
+        "--",
+        "--legacy-watch",
+        "--ext",
+        "ts,js,json",
+        "--signal",
+        "SIGTERM"
+      ]
+
+    stop_grace_period: 30s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+
+    # PostgreSQL
+  
+  postgres:
+    image: postgres:15-alpine
+
+    container_name: writespace-postgres-dev
+
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-writespace}
+      POSTGRES_USER: ${POSTGRES_USER:-writespace}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-writespace_dev_password}
+
     ports:
-      - "6380:6379"
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5433}:5432"
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+
+    # Redis
+  
+  redis:
+    image: redis:7-alpine
+
+    container_name: writespace-redis-dev
+
+    restart: unless-stopped
+
+    command:
+      ["redis-server", "--appendonly", "yes"]
+
+    ports:
+      - "127.0.0.1:${REDIS_HOST_PORT:-6380}:6379"
+
+    volumes:
+      - redis_data:/data
+
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+
+# Persistent storage
 
 volumes:
-  pgdata:
+  postgres_data:
+  redis_data:

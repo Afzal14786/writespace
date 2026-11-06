@@ -1,26 +1,38 @@
-# Dependencies and build output
+# Dependencies
 node_modules
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Build output
 dist
 coverage
 
-# Git and development tooling
+# Git
 .git
+.gitignore
 .github
-.devin
+
+# IDE/editor
 .vscode
 .idea
+.devin
 
 # Documentation and tests
 docs
 test
 tests
 
-# Runtime-generated files
+# Runtime files
 logs
 uploads
 *.log
 
-# Environment secrets
+# Environment files and secrets
 .env
 .env.*
 !.env.example
+
+# Operating system
+.DS_Store
+Thumbs.db
