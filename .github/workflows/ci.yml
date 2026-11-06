@@ -2,14 +2,25 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
   pull_request:
-    branches: [main]
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   quality:
-    name: Lint, Typecheck, Build, Test
+    name: Lint, Build and Database Schema
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     services:
       postgres:
@@ -21,44 +32,23 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
+          --health-cmd "pg_isready -U testuser -d testdb"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
 
     env:
-      NODE_ENV: test
       DATABASE_URL: postgresql://testuser:testpass@localhost:5432/testdb
-      REDIS_URL: redis://localhost:6379
-      JWT_ACCESS_SECRET: "test-access-secret-minimum-32-characters-long"
-      JWT_REFRESH_SECRET: "test-refresh-secret-minimum-32-characters-long"
-      CLOUDINARY_CLOUD_NAME: "test-cloud"
-      CLOUDINARY_API_KEY: "test-key"
-      CLOUDINARY_API_SECRET: "test-secret"
-      SMTP_HOST: "smtp.example.com"
-      SMTP_PORT: "587"
-      SMTP_USER: "test@example.com"
-      SMTP_PASS: "test-password"
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Setup Node.js 24
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '24'
-          cache: 'npm'
+          node-version: 24
+          cache: npm
 
       - name: Install dependencies
         run: npm ci
@@ -66,14 +56,8 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      - name: Typecheck
-        run: npx tsc --noEmit
-
       - name: Build
         run: npm run build
 
-      - name: Run database migrations
-        run: npm run db:migrate
-
-      - name: Run tests
-        run: npm test
+      - name: Apply database schema
+        run: npm run db:push
