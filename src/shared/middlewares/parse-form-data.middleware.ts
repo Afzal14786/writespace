@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from "express";
+import logger from "@config/logger";
 
 /**
  * Parses JSON-encoded fields sent through multipart/form-data.
@@ -37,11 +38,8 @@ export const parseFormDataJson = (
     try {
       body[field] = JSON.parse(fieldValue) as unknown;
     } catch (error: unknown) {
-      if (error instanceof Error) {
-        console.warn(
-          `[ParseFormData] Failed to parse field '${field}': ${error.message}`,
-        );
-      }
+      const message = error instanceof Error ? error.message: String(error);
+      logger.warn(`[ParseFormData] Failed to parse field '${field}': ${message}`);
     }
   }
 
