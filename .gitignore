@@ -62,10 +62,8 @@ bower_components
 build/Release
 
 # Dependency directories
-jspm_packages/
 
 # TypeScript cache
-*.tsbuildinfo
 
 # Build output
 dist/
@@ -78,3 +76,9 @@ uploads/
 *.swp
 *.swo
 .DS_Store
+
+# Private project documentation
+/CODE_OF_CONDUCT.md
+/CONTRIBUTING.md
+/DEVELOPER.md
+/SECURITY.md
