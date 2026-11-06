@@ -24,6 +24,22 @@ cloudinary.config({
   api_secret: env.CLOUDINARY_API_SECRET,
 });
 
+
+const ALLOWED_IMAGE_EXTENSIONS = new Set([
+  ".jpg",
+  ".jpeg",
+  ".png",
+  ".gif",
+  ".webp",
+]);
+
+const ALLOWED_IMAGE_MIME_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+]);
+
 /**
  * File filter to restrict uploads to allowed image types.
  */
@@ -32,11 +48,16 @@ const fileFilter = (
   file: Express.Multer.File,
   cb: FileFilterCallback,
 ): void => {
-  const filetypes = /jpeg|jpg|png|gif|webp/;
-  const extname = filetypes.test(path.extname(file.originalname).toLowerCase());
-  const mimetype = filetypes.test(file.mimetype);
+  const extension = path.extname(file.originalname).toLowerCase();
+  const mimeType = file.mimetype.toLowerCase();
 
-  if (mimetype && extname) {
+  const isAllowedExtension =
+    ALLOWED_IMAGE_EXTENSIONS.has(extension);
+
+  const isAllowedMimeType =
+    ALLOWED_IMAGE_MIME_TYPES.has(mimeType);
+
+  if (isAllowedExtension && isAllowedMimeType) {
     cb(null, true);
     return;
   }
@@ -76,7 +97,7 @@ class CloudinaryStorageEngine implements StorageEngine {
       {
         folder,
         public_id: publicId,
-        resource_type: "auto",
+        resource_type: "image",
       },
       (
         error: UploadApiErrorResponse | undefined,
