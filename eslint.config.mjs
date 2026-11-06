@@ -41,7 +41,7 @@ export default [
   },
   // Test files – relax strict rules
   {
-    files: ['test/**/*.ts'],
+    files: ['**/*.test.ts', '**/*.spec.ts'],
     rules: {
       '@typescript-eslint/no-explicit-any': 'off',
       '@typescript-eslint/no-unsafe-assignment': 'off',
