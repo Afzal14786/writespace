@@ -1,20 +1,59 @@
-import { Router } from "express";
+import { Router, type RequestHandler } from "express";
+import { AppError } from "@shared/utils/app.error";
+import { HTTP_STATUS } from "@shared/constants/http-codes";
 import { UserController } from "./user.controller";
 import { authenticate, authorize } from "@shared/middlewares/auth.middleware";
 import { validate } from "@shared/middlewares/validate.middleware";
 import { parseFormDataJson } from "@shared/middlewares/parse-form-data.middleware";
 import { upload } from "@shared/middlewares/upload.middleware";
 import { UpdateProfileSchema } from "./dtos/update-profile.dto";
+import { updatePasswordSchema } from "./dtos/update-password.dto";
 
 const router = Router();
+
+/**
+ * Allows profile updates only for the account owner or an administrator.
+ *
+ * This must execute before Multer/Cloudinary to avoid unauthorized uploads.
+ */
+const authorizeProfileOwnerOrAdmin: RequestHandler = (req, _res, next) => {
+  if (!req.user?.id) {
+    return next(
+      new AppError(HTTP_STATUS.UNAUTHORIZED, "Authentication required"),
+    );
+  }
+
+  if (req.params.id !== req.user.id && req.user.role !== "admin") {
+    return next(
+      new AppError(
+        HTTP_STATUS.FORBIDDEN,
+        "You do not have permission to update this profile",
+      ),
+    );
+  }
+
+  next();
+};
 
 /**
  * @route   GET /api/v1/users/check-username
  * @desc    Check if a username is available during registration
  * @access  Public
+ *
+ * This endpoint remains public because it is used during registration.
  */
 router.get("/check-username", UserController.checkUsername);
-router.get("/og/:username", UserController.getProfileDynamicOgImage);
+
+/**
+ * @route   GET /api/v1/users/og/:username
+ * @desc    Generate a profile Open Graph image
+ * @access  Private
+ */
+router.get(
+  "/og/:username",
+  authenticate,
+  UserController.getProfileDynamicOgImage,
+);
 
 /**
  * @route   GET /api/v1/users/search
@@ -31,18 +70,26 @@ router.get("/search", authenticate, UserController.searchUsers);
 router.get("/me", authenticate, UserController.getMe);
 
 /**
- * @route   GET /api/v1/users/profile/:username
- * @desc    Get public profile data by username (attaches follow stats if logged in)
- * @access  Public (Optional Auth)
+ * @route   PUT /api/v1/users/me/password
+ * @desc    Change the authenticated user's password
+ * @access  Private
  */
-// We use a custom auth check here so non-logged in users can still view profiles
-router.get(
-  "/profile/:username",
-  (req, res, next) => {
-    authenticate(req, res, () => next());
-  },
-  UserController.getProfile,
+router.put(
+  "/me/password",
+  authenticate,
+  validate(updatePasswordSchema),
+  UserController.updatePassword,
 );
+
+/**
+ * @route   GET /api/v1/users/profile/:username
+ * @desc    Get another user's profile
+ * @access  Private
+ *
+ * Every profile requires authentication, irrespective of its
+ * public/private visibility setting.
+ */
+router.get("/profile/:username", authenticate, UserController.getProfile);
 
 /**
  * @route   POST /api/v1/users/:id/follow
@@ -59,7 +106,7 @@ router.post("/:id/follow", authenticate, UserController.toggleFollow);
 router.put(
   "/:id",
   authenticate,
-  authorize("admin", "user"),
+  authorizeProfileOwnerOrAdmin,
   upload.fields([
     { name: "profileImage", maxCount: 1 },
     { name: "bannerImage", maxCount: 1 },
