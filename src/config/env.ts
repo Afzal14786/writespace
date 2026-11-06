@@ -207,7 +207,7 @@ const envSchema = z
     // Upload limits
 
     MAX_FILE_SIZE_MB: z.coerce.number().positive().default(5),
-    MAX_FILES_PER_UPLOAD: z.coerce.number().int().positive().default(10),
+    MAX_FILES_PER_UPLOAD: z.coerce.number().int().positive().default(12),
 
     // SMTP
 
@@ -235,7 +235,7 @@ const envSchema = z
     AI_MODEL: z.string().min(1, "AI model name is required"),
     GEMINI_API_KEY: z.string().min(1, "GEMINI_API_KEY is required"),
     AI_MAX_OUTPUT_TOKENS: z.coerce.number().int().positive().default(1000),
-    AI_TIMEOUT_MS: z.coerce.number().int().positive().default(15000),
+    AI_TIMEOUT_MS: z.coerce.number().int().positive().default(60000),
     AI_MAX_RETRIES: z.coerce.number().int().min(0).max(5).default(2),
     AI_MAX_INPUT_CHARS: z.coerce.number().int().positive().default(12000),
   })
