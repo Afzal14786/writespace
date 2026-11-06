@@ -6,12 +6,12 @@
   />
 </div>
 
-<h1 align="left">Writespace</h1>
+<h1 align="left">𝑊𝑟𝑖𝑡𝑒𝑠𝑝𝑎𝑐𝑒</h1>
 
-<p align="left">
-  A Social Blogging Platform for Developers and Technical Communities.
+<p align="center">
+  <i>A Social Blogging Platform for Developers and Technical Communities.</i>
   <br />
-  Publish ideas, write technical articles, share knowledge, and connect with developers.
+  <i>Publish ideas, write technical articles, share knowledge, and connect with developers.</i>
 </p>
 
 <br />
@@ -32,7 +32,7 @@
 <br />
 
 <p align="center">
-  <strong>BACKEND ENGINEERING · CONTENT MANAGEMENT · SOCIAL INTERACTIONS</strong>
+  <strong><b><i>BACKEND ENGINEERING</i></b> · <b><i>CONTENT MANAGEMENT</i></b> · <b><i>SOCIAL INTERACTIONS</i></b></strong>
 </p>
 
 ---
@@ -135,33 +135,44 @@ The data model uses relationships, foreign keys, indexes, and constraints to mai
 
 ## Getting Started
 
+Writespace supports two local development workflows: running the backend directly with Node.js or running the entire development environment using Docker.
+
+Both approaches support the same backend functionality, including PostgreSQL, Redis, background workers, and database seeding.
+
 ### Prerequisites
 
-Make sure you have the following installed:
+**For Node.js development:**
 
-- Node.js
+- Node.js 24+
 - npm
-- PostgreSQL
-- Redis
+- PostgreSQL 15+
+- Redis 7+
 - Git
 
-Docker can also be used for local infrastructure setup.
+**For Docker development:**
+
+- Docker Desktop (or Docker Engine)
+- Docker Compose V2
+- Git
+
+---
 
 ### 1. Clone the repository
 
 ```bash
 git clone https://github.com/Afzal14786/writespace.git
-```
-
-```bash
 cd writespace
 ```
 
 ### 2. Install dependencies
 
+For native Node.js development, install the project dependencies:
+
 ```bash
-npm ci
+npm install
 ```
+
+This step is not required when using Docker, as dependencies are installed inside the development container.
 
 ### 3. Configure environment variables
 
@@ -171,41 +182,209 @@ Create your local environment file:
 cp .env.example .env
 ```
 
-Update the environment variables according to your local configuration.
+Update the values according to your environment.
 
-Make sure PostgreSQL and Redis connection details are configured correctly.
+For Node.js development, configure your local PostgreSQL and Redis connection strings:
+
+```env
+DATABASE_URL=postgresql://postgres:password@localhost:5432/writespace
+REDIS_URL=redis://localhost:6379
+```
+
+For Docker development, the Compose configuration connects the API to the PostgreSQL and Redis services automatically. The database and Redis URLs supplied by the Compose configuration override the corresponding values from `.env`.
+
+Make sure the remaining required application environment variables are also configured.
+
+---
+
+## Running with Node.js
+
+Use this workflow when PostgreSQL and Redis are installed and running directly on your machine.
 
 ### 4. Initialize the database
 
-For a fresh database using the committed migration baseline:
+First, create an empty PostgreSQL database named `writespace` and make sure PostgreSQL and Redis are running.
+
+Choose **one** of the following database initialization approaches.
+
+**Option A: Run migrations**
 
 ```bash
 npx drizzle-kit migrate
 ```
 
-For local development and schema experimentation, you can also synchronize the database directly:
+This applies the committed migration files to your database.
+
+**Option B: Synchronize the schema**
 
 ```bash
 npm run db:push
 ```
 
-These are alternative initialization workflows. Refer to the [Database Migrations documentation](docs/database/migrations.md) for details.
+This synchronizes the current Drizzle schema directly with the database. It is useful during local development and schema experimentation.
 
-### 5. Run the application
+These are alternative initialization workflows. Do not run both as part of the same initial setup. Refer to the [Database Migrations documentation](docs/database/migrations.md) for details.
 
-Check the available scripts:
+### 5. Seed the database
+
+After initializing the schema, populate your local database with demo data:
 
 ```bash
-npm run
+npm run db:seed
 ```
 
-Use the configured development script to start the backend.
+The seed process populates the database with users, Posts, Articles, media, follows, mentions, comments, reactions, saves, shares, notifications, and related records.
 
-### 6. Build the project
+**Important:** The seed script is intended for an empty development database. It checks whether users already exist and stops rather than inserting duplicate demo data.
+
+### 6. Start the backend
+
+```bash
+npm run dev
+```
+
+The backend starts in development mode using Nodemon. Changes to watched source files automatically restart the application.
+
+By default, the API is available at:
+
+```text
+http://localhost:8000
+```
+
+### 7. Build and run the application
+
+To compile the TypeScript application:
 
 ```bash
 npm run build
 ```
+
+To start the compiled application:
+
+```bash
+npm start
+```
+
+---
+
+## Running with Docker
+
+Docker provides a complete local development environment without requiring separate PostgreSQL and Redis installations on your machine.
+
+The development Compose configuration starts:
+
+- Writespace API
+- PostgreSQL
+- Redis
+
+### 4. Start the development environment
+
+From the project root, run:
+
+```bash
+docker compose up --build
+```
+
+Docker builds the development image, starts the required services, and runs the backend.
+
+The API is available at:
+
+```text
+http://localhost:8000
+```
+
+### 5. Initialize the database
+
+On the first run, initialize the PostgreSQL database inside the API container.
+
+Choose one of the following approaches.
+
+**Option A: Run migrations**
+
+```bash
+docker compose exec api npx drizzle-kit migrate
+```
+
+**Option B: Synchronize the schema**
+
+```bash
+docker compose exec api npm run db:push
+```
+
+These are alternative initialization workflows.
+
+### 6. Seed the database
+
+Populate the Docker PostgreSQL database:
+
+```bash
+docker compose exec api npm run db:seed
+```
+
+As with native development, this should be run against an empty development database.
+
+### 7. Development with automatic reloading and live logs
+
+The Docker development setup mounts the local `src` directory into the API container and uses Nodemon to watch source files.
+
+This provides:
+
+- Automatic application restarts when watched source files change.
+- No need to rebuild the Docker image for ordinary TypeScript changes.
+- Live API request logs and application logs in the terminal.
+- Persistent PostgreSQL and Redis data through Docker volumes.
+
+The default `docker compose up --build` command keeps the terminal attached to the containers and displays their logs.
+
+To follow API logs separately:
+
+```bash
+docker compose logs -f api
+```
+
+Useful Docker commands:
+
+| Task                   | Command                        |
+| ---------------------- | ------------------------------ |
+| Start development      | `docker compose up --build`    |
+| Start in background    | `docker compose up --build -d` |
+| Follow API logs        | `docker compose logs -f api`   |
+| Check running services | `docker compose ps`            |
+| Stop services          | `docker compose down`          |
+
+Changes to application source files are automatically detected. Changes to dependencies require rebuilding the development image.
+
+---
+
+## Production Docker Deployment
+
+For production, Writespace uses a separate Compose configuration and a compiled Node.js application.
+
+Configure the production environment file:
+
+```bash
+.env.production
+```
+
+Provide the required production environment variables, including valid PostgreSQL and Redis connection strings. Use managed or separately operated production database and Redis services.
+
+Build and start the production application:
+
+```bash
+docker compose -f docker-compose.prod.yml up --build -d
+```
+
+Follow production API logs:
+
+```bash
+docker compose -f docker-compose.prod.yml logs -f api
+```
+
+The production image runs the compiled application rather than Nodemon and does not mount the local source code.
+
+Database migrations should be executed through the production deployment or migration process before releasing application changes. Do not run the demo seed script against a production database.
+
+---
 
 ## Documentation
 
