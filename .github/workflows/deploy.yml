@@ -2,29 +2,42 @@ name: Deploy to Render
 
 on:
   workflow_run:
-    workflows: ["CI"]
-    types: [completed]
-    branches: [main]
+    workflows:
+      - CI
+    types:
+      - completed
+    branches:
+      - main
+
+permissions:
+  contents: read
 
 jobs:
   deploy:
-    name: Trigger Render Deploy
+    name: Trigger Render Deployment
     runs-on: ubuntu-latest
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    timeout-minutes: 5
+
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main'
+
     steps:
-      - name: Check if deploy hook is configured
-        id: check
+      - name: Trigger Render deploy
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
         run: |
-          if [ -z "${{ secrets.RENDER_DEPLOY_HOOK_URL }}" ]; then
-            echo "configured=false" >> "$GITHUB_OUTPUT"
-            echo "::notice title=Deploy skipped::RENDER_DEPLOY_HOOK_URL is not set yet. Add it in repo Settings → Secrets after setting up Render."
-          else
-            echo "configured=true" >> "$GITHUB_OUTPUT"
+          if [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
+            echo "::notice title=Deployment skipped::RENDER_DEPLOY_HOOK_URL is not configured."
+            exit 0
           fi
 
-      - name: Trigger deploy hook
-        if: steps.check.outputs.configured == 'true'
-        run: |
-          curl --silent --show-error --fail \
-            -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}"
-          echo "Render deploy triggered"
+          curl \
+            --fail \
+            --silent \
+            --show-error \
+            --request POST \
+            --max-time 30 \
+            "$RENDER_DEPLOY_HOOK_URL"
+
+          echo "Render deployment triggered successfully."
