@@ -1,14 +1,17 @@
-import { eq, and, sql, ilike, or } from "drizzle-orm";
+import { eq, and, ilike, or } from "drizzle-orm";
 import { db } from "../../db";
 import { users, type User } from "../../db/schema/users";
 import { follows } from "../../db/schema/follows";
+import bcrypt from "bcryptjs";
+import { authService } from "../auth/auth.service";
+import type { UpdatePasswordInput } from "./dtos/update-password.dto";
 import { AppError } from "@shared/utils/app.error";
 import { HTTP_STATUS } from "@shared/constants/http-codes";
 import type { UpdateProfileDto } from "./dtos/update-profile.dto";
-import type { PublicUser } from "./interface/user.interface";
+import type { PublicUser, PublicProfile } from "./interface/user.interface";
 
-import { addInteractionJob } from "@shared/queues/interaction.queue";
-import { NotificationType } from "../notification/interface/notification.interface";
+const SALT_ROUNDS = 12;
+
 import { notificationService } from "../notification/notification.service";
 
 export interface UsernameAvailability {
@@ -18,29 +21,27 @@ export interface UsernameAvailability {
 
 export class UserService {
   private static toPublicUser(user: User): PublicUser {
-    const {
-      passwordHash,
-      loginAttempts,
-      lockUntil,
-      googleAuth,
-      githubAuth,
-      ...publicFields
-    } = user;
+    // Keep the original database record unchanged.
+    const publicFields = { ...user };
 
-    // Satisfy the compiler that we intentionally omitted these from the return object
-    void passwordHash;
-    void loginAttempts;
-    void lockUntil;
-    void googleAuth;
-    void githubAuth;
+    // Remove sensitive authentication and account-management fields.
+    Reflect.deleteProperty(publicFields, "passwordHash");
+    Reflect.deleteProperty(publicFields, "loginAttempts");
+    Reflect.deleteProperty(publicFields, "lockUntil");
+    Reflect.deleteProperty(publicFields, "googleAuth");
+    Reflect.deleteProperty(publicFields, "githubAuth");
 
-    return publicFields as unknown as PublicUser;
+    return publicFields as PublicUser;
   }
 
   public static async checkUsernameAvailability(
     username: string,
   ): Promise<UsernameAvailability> {
-    const normalizedUsername = username.toLowerCase();
+    const normalizedUsername = username.trim().toLowerCase();
+
+    if (!normalizedUsername) {
+      throw new AppError(HTTP_STATUS.BAD_REQUEST, "Username cannot be empty");
+    }
 
     const existing = await db.query.users.findFirst({
       where: eq(users.username, normalizedUsername),
@@ -71,9 +72,12 @@ export class UserService {
     const searchPattern = `%${query}%`;
 
     const results = await db.query.users.findMany({
-      where: or(
-        ilike(users.username, searchPattern),
-        ilike(users.fullname, searchPattern),
+      where: and(
+        eq(users.status, "active"),
+        or(
+          ilike(users.username, searchPattern),
+          ilike(users.fullname, searchPattern),
+        ),
       ),
       columns: {
         id: true,
@@ -90,31 +94,67 @@ export class UserService {
 
   public static async getUserProfile(
     username: string,
-    currentUserId?: string,
-  ): Promise<PublicUser & { isFollowingByMe: boolean }> {
+    currentUserId: string,
+  ): Promise<PublicProfile & { isFollowingByMe: boolean }> {
+    const normalizedUsername = username.trim().toLowerCase();
+
     const user = await db.query.users.findFirst({
-      where: eq(users.username, username),
+      where: and(
+        eq(users.username, normalizedUsername),
+        eq(users.status, "active"),
+      ),
+      columns: {
+        id: true,
+        fullname: true,
+        username: true,
+        bio: true,
+        headline: true,
+        location: true,
+        profileImageUrl: true,
+        bannerImageUrl: true,
+
+        youtube: true,
+        instagram: true,
+        facebook: true,
+        twitter: true,
+        github: true,
+        website: true,
+        linkedin: true,
+        leetcode: true,
+        geeksforgeeks: true,
+        codeforces: true,
+
+        totalPosts: true,
+        totalReads: true,
+        totalFollowers: true,
+        totalFollowing: true,
+        createdAt: true,
+      },
     });
 
-    if (!user) throw new AppError(HTTP_STATUS.NOT_FOUND, "User not found");
+    if (!user) {
+      throw new AppError(HTTP_STATUS.NOT_FOUND, "User not found");
+    }
 
     let isFollowingByMe = false;
-    if (currentUserId && currentUserId !== user.id) {
+
+    if (currentUserId !== user.id) {
       const [followRecord] = await db
-        .select()
+        .select({ followerId: follows.followerId })
         .from(follows)
         .where(
           and(
             eq(follows.followerId, currentUserId),
             eq(follows.followingId, user.id),
           ),
-        );
+        )
+        .limit(1);
 
-      if (followRecord) isFollowingByMe = true;
+      isFollowingByMe = Boolean(followRecord);
     }
 
     return {
-      ...this.toPublicUser(user),
+      ...user,
       isFollowingByMe,
     };
   }
@@ -218,6 +258,73 @@ export class UserService {
     return this.toPublicUser(updated);
   }
 
+  /**
+   * Changes the password of an authenticated user.
+   *
+   * The user must provide the current password before a new password
+   * can be saved. Existing refresh-token sessions are revoked afterward.
+   */
+  public static async updatePassword(
+    userId: string,
+    data: UpdatePasswordInput,
+  ): Promise<{ message: string }> {
+    const [user] = await db
+      .select({
+        id: users.id,
+        passwordHash: users.passwordHash,
+        email: users.email,
+        username: users.username,
+      })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+
+    if (!user || !user.passwordHash) {
+      throw new AppError(
+        HTTP_STATUS.BAD_REQUEST,
+        "User not found or uses social login without a password.",
+      );
+    }
+
+    const isMatch = await bcrypt.compare(
+      data.currentPassword,
+      user.passwordHash,
+    );
+
+    if (!isMatch) {
+      throw new AppError(
+        HTTP_STATUS.UNAUTHORIZED,
+        "Incorrect current password",
+      );
+    }
+
+    const newPasswordHash = await bcrypt.hash(data.newPassword, SALT_ROUNDS);
+
+    await db
+      .update(users)
+      .set({ passwordHash: newPasswordHash })
+      .where(eq(users.id, userId));
+
+    // Revoke existing refresh-token sessions after the password changes.
+    await authService.revokeAllRefreshTokens(userId);
+
+    // Email notification is best-effort.
+    // A queue failure must not make a successful password change appear to fail.
+    try {
+      await notificationService.sendPasswordUpdateEmail(
+        user.email,
+        user.username,
+      );
+    } catch (error) {
+      console.error("Failed to send password update email:", {
+        userId,
+        error,
+      });
+    }
+
+    return { message: "Password updated successfully" };
+  }
+
   public static async deleteUser(userId: string): Promise<void> {
     const [user] = await db
       .update(users)
@@ -225,88 +332,20 @@ export class UserService {
       .where(eq(users.id, userId))
       .returning({ id: users.id });
 
-    if (!user) throw new AppError(HTTP_STATUS.NOT_FOUND, "User not found");
-  }
-
-  public static async toggleFollow(
-    currentUserId: string,
-    targetUserId: string,
-  ): Promise<{ status: "followed" | "unfollowed" }> {
-    if (currentUserId === targetUserId) {
-      throw new AppError(HTTP_STATUS.BAD_REQUEST, "You cannot follow yourself");
-    }
-
-    const targetUser = await db.query.users.findFirst({
-      where: eq(users.id, targetUserId),
-    });
-
-    if (!targetUser) {
+    if (!user) {
       throw new AppError(HTTP_STATUS.NOT_FOUND, "User not found");
     }
 
-    const existingFollow = await db.query.follows.findFirst({
-      where: and(
-        eq(follows.followerId, currentUserId),
-        eq(follows.followingId, targetUserId),
-      ),
-    });
-
-    // Unfollow Logic
-    if (existingFollow) {
-      await db.transaction(async (tx) => {
-        await tx
-          .delete(follows)
-          .where(
-            and(
-              eq(follows.followerId, currentUserId),
-              eq(follows.followingId, targetUserId),
-            ),
-          );
-
-        await tx
-          .update(users)
-          .set({
-            totalFollowers: sql`GREATEST(${users.totalFollowers} - 1, 0)`,
-          })
-          .where(eq(users.id, targetUserId));
-
-        await tx
-          .update(users)
-          .set({
-            totalFollowing: sql`GREATEST(${users.totalFollowing} - 1, 0)`,
-          })
-          .where(eq(users.id, currentUserId));
+    // A suspended account must not retain usable refresh-token sessions.
+    try {
+      await authService.revokeAllRefreshTokens(userId);
+    } catch (error) {
+      // The account suspension is already persisted.
+      // Refresh-token rotation also independently checks account status.
+      console.error("Failed to revoke refresh tokens for suspended user:", {
+        userId,
+        error,
       });
-
-      return { status: "unfollowed" };
-    }
-    // Follow Logic
-    else {
-      await db.transaction(async (tx) => {
-        await tx.insert(follows).values({
-          followerId: currentUserId,
-          followingId: targetUserId,
-        });
-
-        await tx
-          .update(users)
-          .set({ totalFollowers: sql`${users.totalFollowers} + 1` })
-          .where(eq(users.id, targetUserId));
-
-        await tx
-          .update(users)
-          .set({ totalFollowing: sql`${users.totalFollowing} + 1` })
-          .where(eq(users.id, currentUserId));
-      });
-
-      await addInteractionJob({
-        type: NotificationType.FOLLOW,
-        actorId: currentUserId,
-        recipientId: targetUserId,
-        message: "started following you",
-      });
-
-      return { status: "followed" };
     }
   }
 

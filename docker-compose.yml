@@ -1,15 +1,16 @@
-version: '3.8'
 
 services:
   api:
     build: .
     ports:
-      - "5000:5000"
+      - "8000:8000"
+    env_file:
+      - .env
     environment:
-      - NODE_ENV=development
-      - PORT=5000
-      - DATABASE_URL=postgresql://admin:secret@postgres_db:5432/writespace
-      - REDIS_URL=redis://redis_cache:6379
+      NODE_ENV: development
+      PORT: 5000
+      DATABASE_URL: postgresql://admin:secret@postgres_db:5432/writespace
+      REDIS_URL: redis://redis_cache:6379
     depends_on:
       - postgres_db
       - redis_cache
@@ -17,18 +18,18 @@ services:
   postgres_db:
     image: postgres:15-alpine
     ports:
-      - "5432:5432"
+      - "5433:5432"
     environment:
-      - POSTGRES_USER=admin
-      - POSTGRES_PASSWORD=secret
-      - POSTGRES_DB=writespace
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: writespace
     volumes:
       - pgdata:/var/lib/postgresql/data
 
   redis_cache:
     image: redis:alpine
     ports:
-      - "6379:6379"
+      - "6380:6379"
 
 volumes:
   pgdata:

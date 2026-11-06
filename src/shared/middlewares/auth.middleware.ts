@@ -5,6 +5,9 @@ import { HTTP_STATUS } from "../constants/http-codes";
 import { IJwtPayload } from "@modules/auth/interface/auth.interface";
 import env from "@config/env";
 
+const UUID_REGEX =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const isValidJwtPayload = (payload: unknown): payload is IJwtPayload => {
   if (typeof payload !== "object" || payload === null) {
     return false;
@@ -12,7 +15,11 @@ const isValidJwtPayload = (payload: unknown): payload is IJwtPayload => {
 
   const data = payload as Record<string, unknown>;
 
-  return typeof data.id === "string" && typeof data.role === "string";
+  return (
+    typeof data.id === "string" &&
+    UUID_REGEX.test(data.id) &&
+    (data.role === "user" || data.role === "admin")
+  );
 };
 
 export const authenticate = async (
@@ -39,7 +46,9 @@ export const authenticate = async (
       );
     }
 
-    const decoded = jwt.verify(token, env.JWT_ACCESS_SECRET);
+    const decoded = jwt.verify(token, env.JWT_ACCESS_SECRET, {
+      algorithms: ["HS256"],
+    });
 
     if (!isValidJwtPayload(decoded)) {
       throw new AppError(HTTP_STATUS.UNAUTHORIZED, "Invalid token payload");

@@ -2,35 +2,25 @@ import { AppError } from "@shared/utils/app.error";
 import { HTTP_STATUS } from "@shared/constants/http-codes";
 import { PostStatus } from "../interfaces/post.interface";
 
+/**
+ * Defines the allowed lifecycle transitions for a Post.
+ *
+ * - Drafts can be scheduled or published.
+ * - Scheduled Posts can be published or moved back to draft.
+ * - Published Posts can be moved back to draft (unpublished).
+ *
+ * Permanent deletion is handled separately by the command service.
+ */
 const VALID_TRANSITIONS: Record<PostStatus, readonly PostStatus[]> = {
-  [PostStatus.DRAFT]: [
-    PostStatus.SCHEDULED,
-    PostStatus.PUBLISHED,
-    PostStatus.TRASH,
-  ],
+  [PostStatus.DRAFT]: [PostStatus.SCHEDULED, PostStatus.PUBLISHED],
 
-  [PostStatus.SCHEDULED]: [
-    PostStatus.PUBLISHED,
-    PostStatus.DRAFT,
-    PostStatus.TRASH,
-  ],
+  [PostStatus.SCHEDULED]: [PostStatus.PUBLISHED, PostStatus.DRAFT],
 
-  [PostStatus.PUBLISHED]: [
-    PostStatus.ARCHIVED,
-    PostStatus.DRAFT,
-    PostStatus.TRASH,
-  ],
-
-  [PostStatus.ARCHIVED]: [
-    PostStatus.DRAFT,
-    PostStatus.PUBLISHED,
-    PostStatus.TRASH,
-  ],
-
-  [PostStatus.TRASH]: [PostStatus.DRAFT],
+  [PostStatus.PUBLISHED]: [PostStatus.DRAFT],
 };
 
 export function canTransition(from: PostStatus, to: PostStatus): boolean {
+  // Updating a Post without changing its status is valid.
   if (from === to) {
     return true;
   }
@@ -49,26 +39,17 @@ export function assertValidTransition(from: PostStatus, to: PostStatus): void {
   );
 }
 
+/**
+ * Only published Posts are publicly visible.
+ */
 export function isPublicStatus(status: PostStatus): boolean {
   return status === PostStatus.PUBLISHED;
 }
 
-export function isTrashStatus(status: PostStatus): boolean {
-  return status === PostStatus.TRASH;
-}
-
-export function affectsTotalPosts(from: PostStatus, to: PostStatus): number {
-  if (from !== PostStatus.TRASH && to === PostStatus.TRASH) {
-    return -1;
-  }
-
-  if (from === PostStatus.TRASH && to !== PostStatus.TRASH) {
-    return 1;
-  }
-
-  return 0;
-}
-
+/**
+ * Converts a database status into the PostStatus enum.
+ * An unknown value indicates invalid data in the database.
+ */
 export function toPostStatus(status: string): PostStatus {
   if (Object.values(PostStatus).includes(status as PostStatus)) {
     return status as PostStatus;

@@ -1,6 +1,7 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
+
 import { db } from "../../db";
-import { posts } from "../../db/schema";
+import { contentItems, posts } from "../../db/schema";
 
 import { AppError } from "@shared/utils/app.error";
 import { HTTP_STATUS } from "@shared/constants/http-codes";
@@ -8,16 +9,23 @@ import env from "@config/env";
 
 import { interactionsService } from "../interactions/interactions.service";
 
+import { extractContentText } from "./domain/post-content";
+
 import { postQueryService } from "./services/post-query.service";
+
 import {
   postCommandService,
-  CreatePostData,
-  UpdatePostData,
+  type CreatePostData,
+  type UpdatePostData,
 } from "./services/post-command.service";
 
 class PostService {
   /**
-   * Create a new post.
+   * Create a Post and return its complete representation.
+   *
+   * The command service handles all database writes. Once creation
+   * succeeds, the query service retrieves the Post in the same format
+   * used by the Post detail endpoint.
    */
   public async createPost(authorId: string, data: CreatePostData) {
     const postId = await postCommandService.createPost(authorId, data);
@@ -26,14 +34,19 @@ class PostService {
   }
 
   /**
-   * Get a single post.
+   * Retrieve one Post.
+   *
+   * Visibility and ownership rules are enforced by the query service.
    */
   public async getPost(postId: string, requesterId?: string) {
     return postQueryService.getPost(postId, requesterId);
   }
 
   /**
-   * Get a paginated list of posts.
+   * Retrieve a paginated feed of published Posts.
+   *
+   * The optional author filter allows the same query service to support
+   * author-specific Post listings.
    */
   public async getPosts(
     limit: number,
@@ -50,7 +63,10 @@ class PostService {
   }
 
   /**
-   * Update an existing post.
+   * Update an existing Post and return its latest representation.
+   *
+   * The command service handles ownership validation, lifecycle
+   * transitions, document updates, mentions, and media synchronization.
    */
   public async updatePost(
     postId: string,
@@ -63,29 +79,21 @@ class PostService {
   }
 
   /**
-   * Move a post to trash.
-   */
-  public async deletePost(
-    postId: string,
-    userId: string,
-    isAdmin: boolean = false,
-  ): Promise<void> {
-    await postCommandService.trashPost(postId, userId, isAdmin);
-  }
-
-  /**
-   * Restore a trashed post.
-   */
-  public async restorePost(postId: string, userId: string): Promise<void> {
-    await postCommandService.restorePost(postId, userId);
-  }
-
-  /**
-   * Like or unlike a post.
+   * Permanently delete a Post.
    *
-   * TODO:
-   * Move post engagement operations into a dedicated
-   * post-engagement.service.ts.
+   * This operation is irreversible. The command service verifies
+   * ownership, deletes the content item and its dependent database
+   * records, and queues associated Cloudinary assets for cleanup.
+   */
+  public async deletePost(postId: string, userId: string): Promise<void> {
+    await postCommandService.deletePost(postId, userId);
+  }
+
+  /**
+   * Toggle Like on a published Post.
+   *
+   * The interaction service performs the operation atomically
+   * and updates the shared content reaction counter.
    */
   public async likePost(
     postId: string,
@@ -93,24 +101,23 @@ class PostService {
   ): Promise<{
     status: "liked" | "unliked";
   }> {
-    const existingReaction = await interactionsService.setPostReaction(
+    const reaction = await interactionsService.toggleContentItemLike(
       userId,
       postId,
-      "like",
     );
 
     return {
-      status: existingReaction.isReacted ? "liked" : "unliked",
+      status: reaction.isReacted ? "liked" : "unliked",
     };
   }
-
   /**
-   * Generate a platform-specific share URL and
-   * record the share interaction.
+   * Generate a platform-specific sharing URL and record the interaction.
    *
-   * TODO:
-   * Move post engagement operations into a dedicated
-   * post-engagement.service.ts.
+   * Short Posts no longer have slugs or titles. Their canonical URL
+   * therefore uses the stable Post ID.
+   *
+   * Only published Posts can be shared because drafts and scheduled
+   * Posts are not publicly accessible.
    */
   public async sharePost(
     postId: string,
@@ -122,55 +129,98 @@ class PostService {
   }> {
     const [post] = await db
       .select({
-        slug: posts.slug,
-        title: posts.title,
+        status: contentItems.status,
+        contentDocument: posts.contentDocument,
       })
-      .from(posts)
-      .where(eq(posts.id, postId))
+      .from(contentItems)
+      .innerJoin(posts, eq(posts.id, contentItems.id))
+      .where(
+        and(eq(contentItems.id, postId), eq(contentItems.contentType, "post")),
+      )
       .limit(1);
 
     if (!post) {
       throw new AppError(HTTP_STATUS.NOT_FOUND, "Post not found");
     }
 
+    if (post.status !== "published") {
+      throw new AppError(HTTP_STATUS.NOT_FOUND, "Post not found");
+    }
+
     const baseUrl = env.CLIENT_URL || "https://writespace.com";
 
-    const postUrl = `${baseUrl}/blog/${post.slug}`;
+    /*
+     * Use the Post ID instead of a slug.
+     *
+     * This assumes the frontend's canonical Post detail route is:
+     * /posts/:postId
+     */
+    const postUrl = new URL(
+      `/posts/${postId}`,
+      `${baseUrl.replace(/\/+$/, "")}/`,
+    ).toString();
+
+    const normalizedPlatform = platform.trim().toLowerCase();
+
+    /*
+     * The structured document has no title field.
+     * Extract readable text for platforms that support a share caption.
+     */
+    const shareText = extractContentText(post.contentDocument)
+      .trim()
+      .replace(/\s+/g, " ")
+      .slice(0, 250);
 
     let shareUrl: string;
 
-    switch (platform.toLowerCase()) {
+    switch (normalizedPlatform) {
       case "twitter":
-        shareUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(
-          post.title,
-        )}&url=${encodeURIComponent(postUrl)}`;
-        break;
+      case "x": {
+        const url = new URL("https://twitter.com/intent/tweet");
 
-      case "facebook":
-        shareUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(
-          postUrl,
-        )}`;
-        break;
+        if (shareText) {
+          url.searchParams.set("text", shareText);
+        }
 
-      case "linkedin":
-        shareUrl = `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(
-          postUrl,
-        )}`;
+        url.searchParams.set("url", postUrl);
+
+        shareUrl = url.toString();
         break;
+      }
+
+      case "facebook": {
+        const url = new URL("https://www.facebook.com/sharer/sharer.php");
+
+        url.searchParams.set("u", postUrl);
+
+        shareUrl = url.toString();
+        break;
+      }
+
+      case "linkedin": {
+        const url = new URL("https://www.linkedin.com/sharing/share-offsite/");
+
+        url.searchParams.set("url", postUrl);
+
+        shareUrl = url.toString();
+        break;
+      }
 
       default:
+        // Unknown or direct-sharing platforms receive the canonical URL.
         shareUrl = postUrl;
     }
 
+    // Record the share after the destination URL has been generated.
     await interactionsService.createShare({
       actorId: userId,
       postId,
-      platform,
+      platform: normalizedPlatform,
     });
 
     return {
       url: shareUrl,
-      platform,
+      platform: normalizedPlatform,
     };
   }
 }

@@ -8,11 +8,8 @@
     "lib": ["ES2022"],
     "outDir": "./dist",
     "rootDir": "./src",
-    "removeComments": false,
     
     "strict": true,
-    "noImplicitAny": true,
-    "strictNullChecks": true,
     "strictPropertyInitialization": false,
         
     "paths": {
@@ -36,6 +33,6 @@
   "exclude": [
     "node_modules",
     "dist",
-    "tests"
+    "test"
   ]
 }

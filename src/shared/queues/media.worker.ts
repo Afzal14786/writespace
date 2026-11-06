@@ -2,6 +2,7 @@ import { Worker, Job } from "bullmq";
 import logger from "@config/logger";
 import env from "@config/env";
 import { bullmqRedisConnection } from "@config/bullmq";
+import { MEDIA_QUEUE_NAME, type MediaCleanupJobData } from "./media.queue";
 import { v2 as cloudinary } from "cloudinary";
 
 // Cloudinary client
@@ -11,12 +12,8 @@ cloudinary.config({
   api_secret: env.CLOUDINARY_API_SECRET,
 });
 
-interface MediaCleanupJobData {
-  publicIds: string[];
-}
-
 export const mediaWorker = new Worker(
-  "media-cleanup",
+  MEDIA_QUEUE_NAME,
   async (job: Job<MediaCleanupJobData>) => {
     const { publicIds } = job.data;
 

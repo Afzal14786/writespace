@@ -31,23 +31,24 @@ const envSchema = z
 
     EMAIL_WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(50).default(5),
 
-    INTERACTION_WORKER_CONCURRENCY: z.coerce
+    MEDIA_WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(50).default(5),
+    EMAIL_QUEUE_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(3),
+    MEDIA_QUEUE_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(3),
+    QUEUE_BACKOFF_DELAY_MS: z.coerce.number().int().positive().default(1000),
+    // Notification Queue
+    NOTIFICATION_WORKER_CONCURRENCY: z.coerce
       .number()
       .int()
       .min(1)
       .max(50)
       .default(10),
 
-    MEDIA_WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(50).default(5),
-    EMAIL_QUEUE_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(3),
-    INTERACTION_QUEUE_ATTEMPTS: z.coerce
+    NOTIFICATION_QUEUE_ATTEMPTS: z.coerce
       .number()
       .int()
       .min(1)
       .max(10)
       .default(2),
-    MEDIA_QUEUE_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(3),
-    QUEUE_BACKOFF_DELAY_MS: z.coerce.number().int().positive().default(1000),
 
     // HTTP / Application
 
@@ -62,6 +63,130 @@ const envSchema = z
       .default("http://localhost:8000/api/v1"),
 
     SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().positive().default(10000),
+
+    TRUST_PROXY_HOPS: z.coerce.number().int().min(0).default(0),
+
+    // Rate limiting
+
+    // General API: 300 requests per IP per 15 minutes.
+    API_RATE_LIMIT_WINDOW_MS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(900000),
+    API_RATE_LIMIT_MAX_REQUESTS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(300),
+
+    // Login: IP-based limit.
+    LOGIN_RATE_LIMIT_WINDOW_MS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(900000),
+    LOGIN_RATE_LIMIT_MAX_REQUESTS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(10),
+
+    // Login: email-based failed-attempt limit.
+    LOGIN_EMAIL_RATE_LIMIT_WINDOW_MS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(900000),
+    LOGIN_EMAIL_RATE_LIMIT_MAX_REQUESTS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(5),
+
+    // Registration: IP-based limit.
+    REGISTER_RATE_LIMIT_WINDOW_MS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(3600000),
+    REGISTER_RATE_LIMIT_MAX_REQUESTS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(10),
+
+    // Registration: email-based limit.
+    REGISTER_EMAIL_RATE_LIMIT_WINDOW_MS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(3600000),
+    REGISTER_EMAIL_RATE_LIMIT_MAX_REQUESTS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(3),
+
+    // Email verification: IP-based failed-attempt limit.
+    EMAIL_VERIFICATION_RATE_LIMIT_WINDOW_MS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(900000),
+    EMAIL_VERIFICATION_RATE_LIMIT_MAX_REQUESTS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(10),
+
+    // Email verification: email-based failed-attempt limit.
+    EMAIL_VERIFICATION_EMAIL_RATE_LIMIT_WINDOW_MS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(600000),
+    EMAIL_VERIFICATION_EMAIL_RATE_LIMIT_MAX_REQUESTS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(5),
+
+    // Forgot password: IP-based limit.
+    FORGOT_PASSWORD_RATE_LIMIT_WINDOW_MS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(3600000),
+    FORGOT_PASSWORD_RATE_LIMIT_MAX_REQUESTS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(5),
+
+    // Forgot password: email-based limit.
+    FORGOT_PASSWORD_EMAIL_RATE_LIMIT_WINDOW_MS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(3600000),
+    FORGOT_PASSWORD_EMAIL_RATE_LIMIT_MAX_REQUESTS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(3),
+
+    // Reset password: IP-based failed-attempt limit.
+    RESET_PASSWORD_RATE_LIMIT_WINDOW_MS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(900000),
+    RESET_PASSWORD_RATE_LIMIT_MAX_REQUESTS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(10),
 
     // Authentication
 
@@ -104,7 +229,7 @@ const envSchema = z
     AI_ENABLED: z
       .enum(["true", "false"])
       .transform((value) => value === "true")
-      .default("false"),
+      .prefault("false"),
 
     AI_PROVIDER: z.enum(["gemini", "mock"]).default("gemini"),
     AI_MODEL: z.string().min(1, "AI model name is required"),
@@ -122,7 +247,7 @@ const envSchema = z
 const _env = envSchema.safeParse(process.env);
 
 if (!_env.success) {
-  console.error("❌ Invalid environment variables:", _env.error.format());
+  console.error("Invalid environment variables:", _env.error.format());
   process.exit(1);
 }
 

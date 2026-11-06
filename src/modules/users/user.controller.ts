@@ -6,6 +6,8 @@ import { AppError } from "@shared/utils/app.error";
 import { generateProfileOgImage } from "@shared/utils/og-generator";
 import type { CloudinaryFilesMap } from "@shared/types/cloudinary-file";
 import type { UpdateProfileDto } from "./dtos/update-profile.dto";
+import type { UpdatePasswordInput } from "./dtos/update-password.dto";
+import { followService } from "../interactions/services/follow.service";
 
 export class UserController {
   /**
@@ -17,9 +19,9 @@ export class UserController {
     next: NextFunction,
   ): Promise<void> {
     try {
-      const username = req.query.username as string;
+      const username = req.query.username;
 
-      if (!username) {
+      if (typeof username !== "string" || !username.trim()) {
         throw new AppError(
           HTTP_STATUS.BAD_REQUEST,
           "Username query parameter is required",
@@ -93,6 +95,29 @@ export class UserController {
   }
 
   /**
+   * PUT /api/v1/users/me/password
+   *
+   * Changes the authenticated user's password.
+   */
+  public static async updatePassword(
+    req: Request<Record<string, never>, unknown, UpdatePasswordInput>,
+    res: Response,
+    next: NextFunction,
+  ): Promise<void> {
+    try {
+      if (!req.user?.id) {
+        throw new AppError(HTTP_STATUS.UNAUTHORIZED, "Authentication required");
+      }
+
+      const result = await UserService.updatePassword(req.user.id, req.body);
+
+      new ApiResponse(res, HTTP_STATUS.OK, result.message, null).send();
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
    * GET /api/v1/users/profile/:username
    */
   public static async getProfile(
@@ -101,8 +126,14 @@ export class UserController {
     next: NextFunction,
   ): Promise<void> {
     try {
+      if (!req.user?.id) {
+        throw new AppError(
+          HTTP_STATUS.UNAUTHORIZED,
+          "Authentication required to view profiles",
+        );
+      }
+
       const username = req.params.username as string;
-      const currentUserId = req.user?.id;
 
       if (!username) {
         throw new AppError(
@@ -111,16 +142,13 @@ export class UserController {
         );
       }
 
-      const publicProfile = await UserService.getUserProfile(
-        username,
-        currentUserId,
-      );
+      const profile = await UserService.getUserProfile(username, req.user.id);
 
       new ApiResponse(
         res,
         HTTP_STATUS.OK,
         "User profile retrieved successfully",
-        publicProfile,
+        profile,
       ).send();
     } catch (error) {
       next(error);
@@ -236,10 +264,11 @@ export class UserController {
       const currentUserId = req.user.id;
       const targetUserId = req.params.id as string;
 
-      const result = await UserService.toggleFollow(
-        currentUserId,
+      // Delegate to the shared follow service to avoid duplicate business logic.
+      const result = await followService.toggleFollow({
+        actorId: currentUserId,
         targetUserId,
-      );
+      });
 
       new ApiResponse(
         res,

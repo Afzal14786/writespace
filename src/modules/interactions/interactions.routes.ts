@@ -3,19 +3,54 @@ import { interactionsController } from "./interactions.controllers";
 import { authenticate } from "../../shared/middlewares/auth.middleware";
 import { validate } from "../../shared/middlewares/validate.middleware";
 import { addCommentSchema } from "./dtos/add-comment.dto";
+import { updateCommentSchema } from "./dtos/update-comment.dto";
+import { setReactionSchema } from "./dtos/set-reaction.dto";
 
 const router = Router();
 
-// Comments
+// Generic content-item comments (Posts and Articles)
 
-// Get top-level comments for a post
+/**
+ * GET /interactions/content/:contentItemId/comments
+ *
+ * Retrieve top-level comments for a Post or Article.
+ */
+router.get(
+  "/content/:contentItemId/comments",
+  authenticate as RequestHandler,
+  interactionsController.getContentItemComments as RequestHandler,
+);
+
+/**
+ * POST /interactions/content/:contentItemId/comments
+ *
+ * Add a comment or reply to a Post or Article.
+ */
+router.post(
+  "/content/:contentItemId/comments",
+  authenticate as RequestHandler,
+  validate(addCommentSchema),
+  interactionsController.addContentItemComment as RequestHandler,
+);
+
+// Legacy Post-compatible comments
+
+/**
+ * GET /interactions/comments/:postId
+ *
+ * Legacy Post comment listing endpoint.
+ */
 router.get(
   "/comments/:postId",
   authenticate as RequestHandler,
   interactionsController.getTopLevelComments as RequestHandler,
 );
 
-// Add comment / reply to a post
+/**
+ * POST /interactions/comments/:postId
+ *
+ * Legacy Post comment creation endpoint.
+ */
 router.post(
   "/comments/:postId",
   authenticate as RequestHandler,
@@ -23,28 +58,33 @@ router.post(
   interactionsController.addComment as RequestHandler,
 );
 
-// Get replies for a comment
+// Comment replies and comment management
+
 router.get(
   "/comments/:commentId/replies",
   authenticate as RequestHandler,
   interactionsController.getCommentReplies as RequestHandler,
 );
 
-// Get a specific comment
+/**
+ * Get a specific comment by ID.
+ *
+ * A distinct path is required because GET /comments/:postId
+ * is already used to retrieve top-level comments.
+ */
 router.get(
-  "/comments/:commentId",
+  "/comments/:commentId/detail",
   authenticate as RequestHandler,
   interactionsController.getCommentById as RequestHandler,
 );
 
-// Update a comment
 router.put(
   "/comments/:commentId",
   authenticate as RequestHandler,
+  validate(updateCommentSchema),
   interactionsController.updateComment as RequestHandler,
 );
 
-// Delete a comment
 router.delete(
   "/comments/:commentId",
   authenticate as RequestHandler,
@@ -53,28 +93,26 @@ router.delete(
 
 // Reactions
 
-// Set/change reaction on a post
 router.post(
   "/posts/:postId/reaction",
   authenticate as RequestHandler,
+  validate(setReactionSchema),
   interactionsController.setPostReaction as RequestHandler,
 );
 
-// Remove reaction from a post
 router.delete(
   "/posts/:postId/reaction",
   authenticate as RequestHandler,
   interactionsController.removePostReaction as RequestHandler,
 );
 
-// Set/change reaction on a comment
 router.post(
   "/comments/:commentId/reaction",
   authenticate as RequestHandler,
+  validate(setReactionSchema),
   interactionsController.setCommentReaction as RequestHandler,
 );
 
-// Remove reaction from a comment
 router.delete(
   "/comments/:commentId/reaction",
   authenticate as RequestHandler,
@@ -83,44 +121,73 @@ router.delete(
 
 // Follow
 
-// Follow a user
 router.post(
   "/users/:userId/follow",
   authenticate as RequestHandler,
   interactionsController.followUser as RequestHandler,
 );
 
-// Unfollow a user
 router.delete(
   "/users/:userId/follow",
   authenticate as RequestHandler,
   interactionsController.unfollowUser as RequestHandler,
 );
 
-// Check whether current user follows another user
 router.get(
   "/users/:userId/follow",
   authenticate as RequestHandler,
   interactionsController.checkFollowing as RequestHandler,
 );
 
-// Saves
+// Generic content-item saves (Posts and Articles)
 
-// Save a post
+/**
+ * POST /interactions/content/:contentItemId/save
+ *
+ * Save a Post or Article.
+ */
+router.post(
+  "/content/:contentItemId/save",
+  authenticate as RequestHandler,
+  interactionsController.saveContentItem as RequestHandler,
+);
+
+/**
+ * DELETE /interactions/content/:contentItemId/save
+ *
+ * Remove a saved Post or Article.
+ */
+router.delete(
+  "/content/:contentItemId/save",
+  authenticate as RequestHandler,
+  interactionsController.unsaveContentItem as RequestHandler,
+);
+
+/**
+ * GET /interactions/saved-content
+ *
+ * Retrieve the current user's saved Posts and Articles together.
+ */
+router.get(
+  "/saved-content",
+  authenticate as RequestHandler,
+  interactionsController.getSavedContent as RequestHandler,
+);
+
+// Legacy Post-compatible saves
+
 router.post(
   "/posts/:postId/save",
   authenticate as RequestHandler,
   interactionsController.savePost as RequestHandler,
 );
 
-// Unsave a post
 router.delete(
   "/posts/:postId/save",
   authenticate as RequestHandler,
   interactionsController.unsavePost as RequestHandler,
 );
 
-// Get current user's saved posts
 router.get(
   "/saved-posts",
   authenticate as RequestHandler,
@@ -129,21 +196,18 @@ router.get(
 
 // Shares
 
-// Create a share
 router.post(
   "/posts/:postId/share",
   authenticate as RequestHandler,
   interactionsController.createShare as RequestHandler,
 );
 
-// Get shares for a post
 router.get(
   "/posts/:postId/shares",
   authenticate as RequestHandler,
   interactionsController.getPostShares as RequestHandler,
 );
 
-// Get current user's shares for a post
 router.get(
   "/posts/:postId/my-shares",
   authenticate as RequestHandler,

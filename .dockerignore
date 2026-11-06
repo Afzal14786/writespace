@@ -1,0 +1,26 @@
+# Dependencies and build output
+node_modules
+dist
+coverage
+
+# Git and development tooling
+.git
+.github
+.devin
+.vscode
+.idea
+
+# Documentation and tests
+docs
+test
+tests
+
+# Runtime-generated files
+logs
+uploads
+*.log
+
+# Environment secrets
+.env
+.env.*
+!.env.example

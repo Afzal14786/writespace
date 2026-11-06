@@ -1,17 +1,29 @@
-import { Request, Response, NextFunction } from "express";
+import type { Request, Response, NextFunction } from "express";
+
 import { postService } from "./posts.service";
-import { CreatePostInput } from "./dtos/create-post.dto";
+
+import { CreatePostSchema } from "./dtos/create-post.dto";
+import { updatePostSchema } from "./dtos/update-post.dto";
+
+import type { UpdatePostData } from "./services/post-command.service";
+import type { PostMediaItem } from "./interfaces/post.interface";
+
 import { ApiResponse } from "@shared/utils/api-response";
+import { AppError } from "@shared/utils/app.error";
 import { HTTP_STATUS } from "@shared/constants/http-codes";
-import type { CodeSnippetSchema } from "../../db/schema/posts";
-import type {
-  PostMediaItem,
-  PostCoverImage,
-} from "./interfaces/post.interface";
+
 import { postMediaService } from "./services/post-media.service";
+import { postPreviewService } from "./services/post-preview.service";
+
 import type { PublicUser } from "@modules/users/interface/user.interface";
 import type { CloudinaryFilesMap } from "@shared/types/cloudinary-file";
 
+/**
+ * Authenticated Express request.
+ *
+ * The authentication middleware populates `user` before protected
+ * controller methods are executed.
+ */
 interface AuthRequest<
   ReqBody = unknown,
   ReqQuery = Record<string, string | undefined>,
@@ -20,129 +32,232 @@ interface AuthRequest<
   user?: PublicUser;
 }
 
-type CreatePayloadWithExtras = CreatePostInput & {
-  media: PostMediaItem[];
-  codeSnippets: CodeSnippetSchema[];
-  coverImage?: PostCoverImage;
-};
+/**
+ * Convert an unknown request body into a plain object.
+ *
+ * This also protects DTO parsing from unexpected payload types such as
+ * arrays, strings, or null values.
+ */
+function getRequestBody(body: unknown): Record<string, unknown> {
+  if (body === undefined || body === null) {
+    return {};
+  }
 
-type UpdatePayloadWithExtras = Partial<CreatePostInput> & {
-  media?: PostMediaItem[];
-  codeSnippets?: CodeSnippetSchema[];
-  coverImage?: PostCoverImage;
-};
+  if (typeof body !== "object" || Array.isArray(body)) {
+    throw new AppError(
+      HTTP_STATUS.BAD_REQUEST,
+      "Request body must be a JSON object",
+    );
+  }
+
+  return { ...(body as Record<string, unknown>) };
+}
+
+/**
+ * Parse fields that may arrive as JSON strings through multipart/form-data.
+ *
+ * For application/json requests, these fields are already objects or arrays
+ * and are passed through unchanged.
+ *
+ * For multipart/form-data requests, complex values commonly arrive as
+ * strings and need parsing before Zod validation.
+ */
+function parseJsonFields(
+  body: Record<string, unknown>,
+  fields: string[],
+): Record<string, unknown> {
+  const parsedBody = { ...body };
+
+  for (const field of fields) {
+    const value = parsedBody[field];
+
+    if (typeof value !== "string") {
+      continue;
+    }
+
+    // An empty optional multipart field is treated as omitted.
+    if (value.trim() === "") {
+      delete parsedBody[field];
+      continue;
+    }
+
+    try {
+      parsedBody[field] = JSON.parse(value);
+    } catch {
+      throw new AppError(
+        HTTP_STATUS.BAD_REQUEST,
+        `${field} must contain valid JSON`,
+      );
+    }
+  }
+
+  return parsedBody;
+}
+
+/**
+ * Format Zod validation issues into a readable API error.
+ *
+ * Keeping validation feedback in one place avoids duplicating error
+ * formatting logic in create and update handlers.
+ */
+function getValidationMessage(
+  issues: Array<{
+    path: PropertyKey[];
+    message: string;
+  }>,
+): string {
+  return issues
+    .map((issue) => {
+      const field = issue.path.map(String).join(".") || "body";
+
+      return `${field}: ${issue.message}`;
+    })
+    .join("; ");
+}
 
 class PostsController {
+  /**
+   * Create a new Post.
+   *
+   * Supported request formats:
+   * - application/json
+   * - multipart/form-data with an optional `media` field
+   *
+   * When multipart/form-data is used, `contentDocument` and `tags`
+   * should be submitted as JSON strings.
+   */
   public createPost = async (
-    req: AuthRequest<
-      CreatePostInput & {
-        codeSnippets?: unknown;
-      }
-    >,
+    req: AuthRequest,
     res: Response,
     next: NextFunction,
   ) => {
     try {
       const authorId = req.user!.id;
 
-      const payload = req.body as CreatePayloadWithExtras;
-
       const files = req.files as CloudinaryFilesMap | undefined;
 
       /*
-       * ---------------------------------------------------------
-       * Cover Image
-       * ---------------------------------------------------------
-       *
-       * Cloudinary uploads the banner and gives us:
-       *
-       *   location  -> image URL
-       *   public_id -> Cloudinary public ID
-       *
-       * The Post module uses the canonical PostCoverImage
-       * representation.
-       */
-      const bannerFile = files?.["banner"]?.[0];
-
-      if (bannerFile) {
-        payload.coverImage = postMediaService.createCoverImage(
-          bannerFile.location,
-          bannerFile.public_id,
-          payload.coverImage?.altText,
-          payload.coverImage?.credit,
-        );
-      }
-
-      /*
-       * ---------------------------------------------------------
-       * Post Media
-       * ---------------------------------------------------------
-       *
-       * Convert uploaded Cloudinary files into the canonical
-       * PostMediaItem[] representation:
-       *
-       *   {
-       *     url,
-       *     publicId
-       *   }
+       * Convert newly uploaded Cloudinary files into the Post module's
+       * internal media representation.
        */
       const mediaFiles = files?.["media"] ?? [];
 
-      payload.media = mediaFiles.map((file) =>
+      const media: PostMediaItem[] = mediaFiles.map((file) =>
         postMediaService.createMediaItem(file.location, file.public_id),
       );
 
       /*
-       * ---------------------------------------------------------
-       * Code Snippets
-       * ---------------------------------------------------------
+       * Normalize multipart fields before validating the request.
        *
-       * multipart/form-data sends complex fields as strings,
-       * so parse codeSnippets before passing the payload to the
-       * Post service.
+       * `contentDocument` and `tags` may be JSON strings when the request
+       * uses multipart/form-data.
        */
-      let parsedCodeSnippets: CodeSnippetSchema[] = [];
+      const requestBody = parseJsonFields(getRequestBody(req.body), [
+        "contentDocument",
+        "tags",
+      ]);
 
-      if (req.body.codeSnippets) {
-        if (typeof req.body.codeSnippets === "string") {
-          try {
-            parsedCodeSnippets = JSON.parse(
-              req.body.codeSnippets,
-            ) as CodeSnippetSchema[];
-          } catch (error: unknown) {
-            console.error("Failed to parse code snippets", error);
+      const validation = CreatePostSchema.safeParse({
+        body: requestBody,
+      });
 
-            parsedCodeSnippets = [];
-          }
-        } else if (Array.isArray(req.body.codeSnippets)) {
-          parsedCodeSnippets = req.body.codeSnippets as CodeSnippetSchema[];
-        }
+      if (!validation.success) {
+        throw new AppError(
+          HTTP_STATUS.BAD_REQUEST,
+          getValidationMessage(validation.error.issues),
+        );
       }
 
-      payload.codeSnippets = parsedCodeSnippets;
+      const payload = {
+        ...validation.data.body,
+        media,
+      };
 
       /*
-       * ---------------------------------------------------------
-       * Create Post
-       * ---------------------------------------------------------
+       * The service handles persistence, ownership checks, mentions,
+       * lifecycle validation, and media database records.
        */
-      const fullyHydratedPost = await postService.createPost(authorId, payload);
+      const createdPost = await postService.createPost(authorId, payload);
 
       new ApiResponse(
         res,
         HTTP_STATUS.CREATED,
         "Post created successfully",
-        fullyHydratedPost,
+        createdPost,
       ).send();
     } catch (error) {
       next(error);
     }
   };
 
+  /**
+   * Get public social-sharing metadata for a Post.
+   *
+   * This endpoint is intentionally unauthenticated because external
+   * social-media crawlers need to retrieve preview information.
+   *
+   * Only published Posts are returned. Draft and scheduled Posts
+   * are treated as not found by the preview service.
+   *
+   * The response is safe to cache because it contains only public
+   * Post and author information.
+   */
+  public getPostPreview = async (
+    req: AuthRequest,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const postId = req.params.id;
+
+      // Validate the UUID before passing it to PostgreSQL.
+      const UUID_REGEX =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+      if (!UUID_REGEX.test(postId)) {
+        throw new AppError(HTTP_STATUS.BAD_REQUEST, "Invalid Post ID");
+      }
+
+      const preview = await postPreviewService.getPublicPostPreview(postId);
+
+      /*
+       * Allow browsers and shared caches to reuse public preview data.
+       *
+       * Keep the browser cache relatively short because Post content
+       * and attachments can change after publication.
+       */
+      res.setHeader(
+        "Cache-Control",
+        "public, max-age=60, s-maxage=300, stale-while-revalidate=600",
+      );
+
+      new ApiResponse(
+        res,
+        HTTP_STATUS.OK,
+        "Post preview fetched successfully",
+        preview,
+      ).send();
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  /**
+   * Fetch a paginated feed of published Posts.
+   *
+   * Optional query parameters:
+   * - limit: number of records per page
+   * - cursor: opaque pagination cursor
+   * - authorId: restrict results to one author
+   */
   public getPosts = async (
     req: AuthRequest<
       unknown,
-      { cursor?: string; limit?: string; authorId?: string }
+      {
+        cursor?: string;
+        limit?: string;
+        authorId?: string;
+      }
     >,
     res: Response,
     next: NextFunction,
@@ -152,7 +267,15 @@ class PostsController {
       const limitQuery = req.query.limit;
       const authorIdFilter = req.query.authorId;
 
-      const limit = Math.min(50, Math.max(1, parseInt(limitQuery || "20", 10)));
+      const limit = limitQuery === undefined ? 20 : Number(limitQuery);
+
+      if (!Number.isInteger(limit) || limit < 1 || limit > 50) {
+        throw new AppError(
+          HTTP_STATUS.BAD_REQUEST,
+          "Limit must be an integer between 1 and 50",
+        );
+      }
+
       const requesterId = req.user?.id;
 
       const { posts, nextCursor } = await postService.getPosts(
@@ -164,13 +287,22 @@ class PostsController {
 
       new ApiResponse(res, HTTP_STATUS.OK, "Posts fetched successfully", {
         posts,
-        pagination: { limit, nextCursor },
+        pagination: {
+          limit,
+          nextCursor,
+        },
       }).send();
     } catch (error) {
       next(error);
     }
   };
 
+  /**
+   * Fetch one Post by its ID.
+   *
+   * The query service determines whether the requester is allowed
+   * to see the requested Post.
+   */
   public getPost = async (
     req: AuthRequest,
     res: Response,
@@ -179,6 +311,7 @@ class PostsController {
     try {
       const postId = req.params.id;
       const requesterId = req.user?.id;
+
       const post = await postService.getPost(postId, requesterId);
 
       new ApiResponse(
@@ -192,14 +325,22 @@ class PostsController {
     }
   };
 
+  /**
+   * Update an existing Post.
+   *
+   * The client can:
+   * - Change the structured content document.
+   * - Change tags.
+   * - Change its lifecycle status.
+   * - Change its scheduled publication time.
+   * - Upload additional images.
+   * - Remove existing images using their database attachment IDs.
+   *
+   * Existing images are retained by default. The client does not need
+   * to resend their URLs or Cloudinary public IDs.
+   */
   public updatePost = async (
-    req: AuthRequest<
-      Partial<CreatePostInput> & {
-        existingMedia?: string | string[];
-        existingMediaPublicIds?: string | string[];
-        codeSnippets?: unknown;
-      }
-    >,
+    req: AuthRequest,
     res: Response,
     next: NextFunction,
   ) => {
@@ -207,141 +348,76 @@ class PostsController {
       const postId = req.params.id;
       const authorId = req.user!.id;
 
-      const payload = req.body as UpdatePayloadWithExtras;
-
       const files = req.files as CloudinaryFilesMap | undefined;
 
       /*
-       * ---------------------------------------------------------
-       * Cover Image
-       * ---------------------------------------------------------
+       * 1. Process newly uploaded images.
+       *
+       * Cloudinary provides the image URL and public ID.
+       * Convert them into the Post module's media representation.
        */
-      const bannerFile = files?.["banner"]?.[0];
-
-      if (bannerFile) {
-        payload.coverImage = postMediaService.createCoverImage(
-          bannerFile.location,
-          bannerFile.public_id,
-          payload.coverImage?.altText,
-          payload.coverImage?.credit,
-        );
-      }
-
-      /*
-       * ---------------------------------------------------------
-       * Media
-       * ---------------------------------------------------------
-       *
-       * The client sends:
-       *
-       * existingMedia
-       * existingMediaPublicIds
-       *
-       * New uploads come from Cloudinary files.
-       *
-       * We convert everything into the canonical:
-       *
-       * PostMediaItem[]
-       *
-       * representation before passing it to the service.
-       */
-
       const mediaFiles = files?.["media"] ?? [];
 
-      const newMedia: PostMediaItem[] = mediaFiles.map((file) =>
+      const media: PostMediaItem[] = mediaFiles.map((file) =>
         postMediaService.createMediaItem(file.location, file.public_id),
       );
 
-      let existingMedia: string[] = [];
-      let existingMediaPublicIds: string[] = [];
-
-      const hasExistingMediaField = Object.prototype.hasOwnProperty.call(
-        req.body,
-        "existingMedia",
-      );
-
-      const hasExistingMediaPublicIdsField =
-        Object.prototype.hasOwnProperty.call(
-          req.body,
-          "existingMediaPublicIds",
-        );
-
-      if (hasExistingMediaField) {
-        const value = req.body.existingMedia;
-
-        existingMedia = Array.isArray(value)
-          ? (value as string[])
-          : [value as string];
-      }
-
-      if (hasExistingMediaPublicIdsField) {
-        const value = req.body.existingMediaPublicIds;
-
-        existingMediaPublicIds = Array.isArray(value)
-          ? (value as string[])
-          : [value as string];
-      }
-
       /*
-       * If the client sent any media information, construct the
-       * complete next media state.
+       * 2. Parse multipart/form-data fields.
        *
-       * This also allows the client to explicitly send empty
-       * arrays to remove all existing media.
+       * Complex values such as contentDocument, tags, and removeMediaIds
+       * may arrive as JSON strings rather than JavaScript objects/arrays.
+       *
+       * For application/json requests, they are already parsed.
        */
-      if (
-        hasExistingMediaField ||
-        hasExistingMediaPublicIdsField ||
-        newMedia.length > 0
-      ) {
-        if (existingMedia.length !== existingMediaPublicIds.length) {
-          throw new Error(
-            "Existing media URLs and publicIds must contain the same number of items",
-          );
-        }
+      const requestBody = parseJsonFields(getRequestBody(req.body), [
+        "contentDocument",
+        "tags",
+        "removeMediaIds",
+      ]);
 
-        const existingMediaItems: PostMediaItem[] = existingMedia.map(
-          (url, index) =>
-            postMediaService.createMediaItem(
-              url,
-              existingMediaPublicIds[index],
-            ),
+      /*
+       * 3. Validate the request using the update DTO.
+       *
+       * The DTO validates the document structure, tags, lifecycle fields,
+       * and UUIDs of media attachment records being removed.
+       */
+      const validation = updatePostSchema.safeParse({
+        body: requestBody,
+      });
+
+      if (!validation.success) {
+        throw new AppError(
+          HTTP_STATUS.BAD_REQUEST,
+          getValidationMessage(validation.error.issues),
         );
-
-        payload.media = [...existingMediaItems, ...newMedia];
-
-        postMediaService.validateMedia(payload.media);
       }
 
       /*
-       * ---------------------------------------------------------
-       * Code Snippets
-       * ---------------------------------------------------------
+       * 4. Construct the command-service payload.
+       *
+       * removeMediaIds contains post_media.id values.
+       * It does not contain Cloudinary public IDs.
+       *
+       * If no new images were uploaded, omit `media` so the command
+       * service knows that no new attachments were supplied.
        */
-      let parsedCodeSnippets: CodeSnippetSchema[] | undefined = undefined;
+      const { removeMediaIds, ...updateFields } = validation.data.body;
 
-      if (req.body.codeSnippets) {
-        if (typeof req.body.codeSnippets === "string") {
-          try {
-            parsedCodeSnippets = JSON.parse(
-              req.body.codeSnippets,
-            ) as CodeSnippetSchema[];
-          } catch (error: unknown) {
-            console.error("Failed to parse code snippets", error);
-          }
-        } else if (Array.isArray(req.body.codeSnippets)) {
-          parsedCodeSnippets = req.body.codeSnippets as CodeSnippetSchema[];
-        }
-      }
+      const payload: UpdatePostData = {
+        ...updateFields,
 
-      if (parsedCodeSnippets !== undefined) {
-        payload.codeSnippets = parsedCodeSnippets;
-      }
+        ...(removeMediaIds !== undefined ? { removeMediaIds } : {}),
+
+        ...(media.length > 0 ? { media } : {}),
+      };
 
       /*
-       * ---------------------------------------------------------
-       * Update Post
-       * ---------------------------------------------------------
+       * 5. Execute the update.
+       *
+       * The command service handles ownership, lifecycle validation,
+       * database updates, mention synchronization, media synchronization,
+       * and cleanup of removed Cloudinary assets.
        */
       const updatedPost = await postService.updatePost(
         postId,
@@ -360,6 +436,13 @@ class PostsController {
     }
   };
 
+  /**
+   * Permanently delete a Post.
+   *
+   * Deletion is restricted to the Post owner.
+   * Cloudinary cleanup and related database deletion are handled
+   * by the command service.
+   */
   public deletePost = async (
     req: AuthRequest,
     res: Response,
@@ -368,9 +451,9 @@ class PostsController {
     try {
       const postId = req.params.id;
       const authorId = req.user!.id;
-      const isAdmin = req.user!.role === "admin";
 
-      await postService.deletePost(postId, authorId, isAdmin);
+      await postService.deletePost(postId, authorId);
+
       new ApiResponse(
         res,
         HTTP_STATUS.OK,
@@ -382,6 +465,11 @@ class PostsController {
     }
   };
 
+  /**
+   * Like or unlike a Post.
+   *
+   * The interactions module handles reaction persistence.
+   */
   public likePost = async (
     req: AuthRequest,
     res: Response,
@@ -392,6 +480,7 @@ class PostsController {
       const userId = req.user!.id;
 
       const result = await postService.likePost(postId, userId);
+
       new ApiResponse(
         res,
         HTTP_STATUS.OK,
@@ -403,6 +492,9 @@ class PostsController {
     }
   };
 
+  /**
+   * Generate a share URL for a published Post and record the interaction.
+   */
   public sharePost = async (
     req: AuthRequest<{ platform?: string }>,
     res: Response,
@@ -411,13 +503,12 @@ class PostsController {
     try {
       const postId = req.params.id;
       const userId = req.user!.id;
-      const platform = req.body.platform;
 
-      const shareData = await postService.sharePost(
-        postId,
-        userId,
-        platform || "generic",
-      );
+      const platform =
+        typeof req.body?.platform === "string" ? req.body.platform : "generic";
+
+      const shareData = await postService.sharePost(postId, userId, platform);
+
       new ApiResponse(
         res,
         HTTP_STATUS.OK,

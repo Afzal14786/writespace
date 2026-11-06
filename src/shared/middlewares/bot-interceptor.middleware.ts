@@ -1,9 +1,43 @@
-import { Request, Response, NextFunction } from "express";
+import { asc, and, eq } from "drizzle-orm";
+import type { Request, Response, NextFunction } from "express";
+
 import { db } from "../../db";
-import { posts } from "../../db/schema/posts";
-import { users } from "../../db/schema/users";
-import { eq } from "drizzle-orm";
+import { contentItems, postMedia, posts, users } from "../../db/schema";
+
+import type { ContentDocument } from "../../db/schema/content-document";
+
 import logger from "@config/logger";
+
+/**
+ * Converts the structured content document into plain text for
+ * social-media preview descriptions.
+ *
+ * Paragraphs contain text/link/mention nodes, while code blocks
+ * contain their source code directly.
+ */
+function extractPlainText(document: ContentDocument): string {
+  return document.blocks
+    .map((block) => {
+      if (block.type === "code") {
+        return block.code;
+      }
+
+      return block.children
+        .map((node) => {
+          // Mentions store user IDs, not display names.
+          // Avoid exposing raw IDs in the social preview.
+          if (node.type === "mention") {
+            return "";
+          }
+
+          return node.text;
+        })
+        .join("");
+    })
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
 export const botInterceptor = async (
   req: Request,
@@ -29,100 +63,132 @@ export const botInterceptor = async (
     userAgent.includes("scraper") ||
     userAgent.includes("mozilla/5.0 (x11; ubuntu; linux");
 
-  if (postRouteMatch) {
+  if (postRouteMatch && isBot) {
     const postId = postRouteMatch[1];
-    if (isBot) {
-      logger.info(
-        `[BOT-INTERCEPTOR] 🤖 Bot Detected! Fetching post ${postId}...`,
-      );
-      try {
-        const [postData] = await db
-          .select({
-            title: posts.title,
-            content: posts.content,
-            media: posts.media,
-            authorName: users.fullname,
-          })
-          .from(posts)
-          .leftJoin(users, eq(posts.authorId, users.id))
-          .where(eq(posts.id, postId))
-          .limit(1);
 
-        if (!postData) return next();
+    logger.info(
+      `[BOT-INTERCEPTOR] 🤖 Bot Detected! Fetching post ${postId}...`,
+    );
 
-        const rawText =
-          postData.content?.replace(/<[^>]*>?/gm, "").trim() ||
-          "Join the conversation on Writespace.";
-        const description =
-          rawText.length > 150 ? rawText.substring(0, 147) + "..." : rawText;
-        const title =
-          postData.title ||
-          `Post by ${postData.authorName || "Writespace User"}`;
-        const ogImage =
-          postData.media && postData.media.length > 0
-            ? postData.media[0]
-            : "https://writespace.com/default-og-image.png";
-        const currentDomain = `${req.protocol}://${req.get("host")}`;
+    try {
+      const [postData] = await db
+        .select({
+          contentDocument: posts.contentDocument,
+          authorName: users.fullname,
+        })
+        .from(contentItems)
+        .innerJoin(posts, eq(posts.id, contentItems.id))
+        .leftJoin(users, eq(contentItems.authorId, users.id))
+        .where(
+          and(
+            eq(contentItems.id, postId),
+            eq(contentItems.contentType, "post"),
+            eq(contentItems.status, "published"),
+          ),
+        )
+        .limit(1);
 
-        const html = generateOgHtml(
-          title,
-          description,
-          ogImage,
-          `${currentDomain}/post/${postId}`,
-        );
-        res.setHeader("Bypass-Tunnel-Reminder", "true");
-        return res.status(200).send(html);
-      } catch (error) {
-        logger.error("[BOT-INTERCEPTOR] Post DB Error:", error as Error);
+      // Do not generate a public preview for a missing or unpublished Post.
+      if (!postData) {
         return next();
       }
+
+      const rawText = extractPlainText(postData.contentDocument);
+
+      const description = rawText
+        ? rawText.length > 150
+          ? `${rawText.substring(0, 147)}...`
+          : rawText
+        : "Join the conversation on Writespace.";
+
+      // Short Posts intentionally do not have titles.
+      const title = `Post by ${postData.authorName || "Writespace User"}`;
+
+      // Post images are stored separately from the structured content body.
+      const [firstMedia] = await db
+        .select({
+          url: postMedia.url,
+        })
+        .from(postMedia)
+        .where(eq(postMedia.postId, postId))
+        .orderBy(asc(postMedia.position))
+        .limit(1);
+
+      const ogImage =
+        firstMedia?.url || "https://writespace.com/default-og-image.png";
+
+      const currentDomain = `${req.protocol}://${req.get("host")}`;
+
+      const html = generateOgHtml(
+        title,
+        description,
+        ogImage,
+        `${currentDomain}/post/${postId}`,
+      );
+
+      res.setHeader("Bypass-Tunnel-Reminder", "true");
+      return res.status(200).send(html);
+    } catch (error) {
+      logger.error("[BOT-INTERCEPTOR] Post DB Error:", error as Error);
+      return next();
     }
-  } else if (profileRouteMatch) {
+  }
+
+  if (profileRouteMatch && isBot) {
     const username = profileRouteMatch[1];
-    if (username === "me") return next();
 
-    if (isBot) {
-      logger.info(
-        `[BOT-INTERCEPTOR] 🤖 Bot Detected! Fetching profile for @${username}...`,
-      );
-      try {
-        const [userData] = await db
-          .select({
-            fullname: users.fullname,
-            headline: users.headline,
-            bio: users.bio,
-            avatar: users.profileImageUrl,
-          })
-          .from(users)
-          .where(eq(users.username, username))
-          .limit(1);
+    if (username === "me") {
+      return next();
+    }
 
-        if (!userData) return next();
+    logger.info(
+      `[BOT-INTERCEPTOR] 🤖 Bot Detected! Fetching profile for @${username}...`,
+    );
 
-        const title = `${userData.fullname} (@${username}) | Writespace`;
-        const rawDesc =
-          userData.headline ||
-          userData.bio ||
-          `Check out ${userData.fullname}'s portfolio, articles, and projects on Writespace.`;
-        const description =
-          rawDesc.length > 150 ? rawDesc.substring(0, 147) + "..." : rawDesc;
-        const ogImage =
-          userData.avatar ||
-          `https://ui-avatars.com/api/?name=${username}&size=512&background=random`;
-        const currentDomain = `${req.protocol}://${req.get("host")}`;
+    try {
+      const [userData] = await db
+        .select({
+          fullname: users.fullname,
+          headline: users.headline,
+          bio: users.bio,
+          avatar: users.profileImageUrl,
+        })
+        .from(users)
+        .where(eq(users.username, username))
+        .limit(1);
 
-        const html = generateOgHtml(
-          title,
-          description,
-          ogImage,
-          `${currentDomain}/profile/${username}`,
-        );
-        res.setHeader("Bypass-Tunnel-Reminder", "true");
-        return res.status(200).send(html);
-      } catch (error) {
-        logger.error("[BOT-INTERCEPTOR] Profile DB Error:", error as Error);
+      if (!userData) {
         return next();
       }
+
+      const title = `${userData.fullname} (@${username}) | Writespace`;
+
+      const rawDesc =
+        userData.headline ||
+        userData.bio ||
+        `Check out ${userData.fullname}'s portfolio, articles, and projects on Writespace.`;
+
+      const description =
+        rawDesc.length > 150 ? `${rawDesc.substring(0, 147)}...` : rawDesc;
+
+      const ogImage =
+        userData.avatar ||
+        `https://ui-avatars.com/api/?name=${username}&size=512&background=random`;
+
+      const currentDomain = `${req.protocol}://${req.get("host")}`;
+
+      const html = generateOgHtml(
+        title,
+        description,
+        ogImage,
+        `${currentDomain}/profile/${username}`,
+      );
+
+      res.setHeader("Bypass-Tunnel-Reminder", "true");
+      return res.status(200).send(html);
+    } catch (error) {
+      logger.error("[BOT-INTERCEPTOR] Profile DB Error:", error as Error);
+      return next();
     }
   }
 
@@ -130,36 +196,57 @@ export const botInterceptor = async (
 };
 
 /**
- * Helper function to keep the HTML template clean and reusable
+ * Escapes HTML special characters before inserting user-generated
+ * content into the metadata document.
+ */
+const escapeHtml = (value: string): string => {
+  const entities: Record<string, string> = {
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  };
+
+  return value.replace(/[&<>"']/g, (character) => entities[character]);
+};
+
+/**
+ * Generates the HTML document consumed by social-media crawlers.
  */
 function generateOgHtml(
   title: string,
   description: string,
   image: string,
   url: string,
-) {
+): string {
+  const safeTitle = escapeHtml(title);
+  const safeDescription = escapeHtml(description);
+  const safeImage = escapeHtml(image);
+  const safeUrl = escapeHtml(url);
+
   return `
     <!DOCTYPE html>
     <html lang="en">
-    <head>
+      <head>
         <meta charset="UTF-8">
-        <title>${title}</title>
+        <title>${safeTitle}</title>
         <meta property="og:type" content="profile">
-        <meta property="og:url" content="${url}">
-        <meta property="og:title" content="${title}">
-        <meta property="og:description" content="${description}">
-        <meta property="og:image" content="${image}">
+        <meta property="og:url" content="${safeUrl}">
+        <meta property="og:title" content="${safeTitle}">
+        <meta property="og:description" content="${safeDescription}">
+        <meta property="og:image" content="${safeImage}">
         <meta property="twitter:card" content="summary_large_image">
-        <meta property="twitter:url" content="${url}">
-        <meta property="twitter:title" content="${title}">
-        <meta property="twitter:description" content="${description}">
-        <meta property="twitter:image" content="${image}">
-    </head>
-    <body>
-        <h1>${title}</h1>
-        <p>${description}</p>
-        <p>Please open this link in a standard browser to view the full profile on Writespace.</p>
-    </body>
+        <meta property="twitter:url" content="${safeUrl}">
+        <meta property="twitter:title" content="${safeTitle}">
+        <meta property="twitter:description" content="${safeDescription}">
+        <meta property="twitter:image" content="${safeImage}">
+      </head>
+      <body>
+        <h1>${safeTitle}</h1>
+        <p>${safeDescription}</p>
+        <p>Please open this link in a standard browser to view the full content on Writespace.</p>
+      </body>
     </html>
   `;
 }

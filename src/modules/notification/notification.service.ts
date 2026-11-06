@@ -6,7 +6,7 @@ import { passwordUpdateTemplate } from "./templates/password-update";
 import { profileUpdateTemplate } from "./templates/profile-update";
 import { otpVerifyTemplate } from "./templates/otp-verify";
 import { NotificationType } from "./interface/notification.interface";
-import { addInteractionJob } from "@shared/queues/interaction.queue";
+import { addNotificationJob } from "@shared/queues/notification.queue";
 
 import { db } from "../../db";
 import { notifications } from "../../db/schema/notifications";
@@ -208,7 +208,7 @@ class NotificationService implements INotificationService {
     relatedId?: string,
     actorId?: string,
   ): Promise<void> {
-    await addInteractionJob({
+    await addNotificationJob({
       recipientId: recipient,
       type,
       message,

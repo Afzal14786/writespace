@@ -1,81 +1,367 @@
-import { and, desc, eq, lt, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 
 import { db } from "../../../db";
-import { postSaves } from "../../../db/schema";
+
+import {
+  articles,
+  contentItems,
+  contentSaves,
+  posts,
+} from "../../../db/schema";
+
+import type { SavedPostCursor } from "../contracts/save.types";
+
+/**
+ * Generic cursor for saved content.
+ *
+ * Unlike SavedPostCursor, this uses contentItemId because
+ * saved content can represent either a Post or an Article.
+ */
+export interface SavedContentCursor {
+  createdAt: string;
+  contentItemId: string;
+}
 
 export class SaveRepository {
-  async findSave(userId: string, postId: string) {
-    const result = await db
+  // ---------------------------------------------------------------------------
+  // Content item validation
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Check whether a content item exists and has a valid content subtype.
+   *
+   * Both Posts and Articles are stored in content_items.
+   * The subtype determines which content-specific table owns the record.
+   */
+  public async findContentItem(contentItemId: string) {
+    const [contentItem] = await db
       .select({
-        postId: postSaves.postId,
-        userId: postSaves.userId,
-        createdAt: postSaves.createdAt,
+        id: contentItems.id,
+        contentType: contentItems.contentType,
+        status: contentItems.status,
       })
-      .from(postSaves)
-      .where(and(eq(postSaves.userId, userId), eq(postSaves.postId, postId)))
+      .from(contentItems)
+      .where(
+        and(
+          eq(contentItems.id, contentItemId),
+          inArray(contentItems.contentType, ["post", "article"]),
+        ),
+      )
       .limit(1);
 
-    return result[0] ?? null;
+    if (!contentItem) {
+      return null;
+    }
+
+    // Verify that the matching subtype record exists.
+    if (contentItem.contentType === "post") {
+      const [post] = await db
+        .select({ id: posts.id })
+        .from(posts)
+        .where(eq(posts.id, contentItemId))
+        .limit(1);
+
+      return post ? contentItem : null;
+    }
+
+    const [article] = await db
+      .select({ id: articles.id })
+      .from(articles)
+      .where(eq(articles.id, contentItemId))
+      .limit(1);
+
+    return article ? contentItem : null;
   }
 
-  async isPostSaved(userId: string, postId: string) {
-    const result = await db
+  /**
+   * Legacy Post-specific existence check.
+   *
+   * New application code should use findContentItem().
+   */
+  public async findPost(postId: string) {
+    const [result] = await db
+      .select({
+        id: contentItems.id,
+      })
+      .from(contentItems)
+      .innerJoin(posts, eq(posts.id, contentItems.id))
+      .where(
+        and(eq(contentItems.id, postId), eq(contentItems.contentType, "post")),
+      )
+      .limit(1);
+
+    return result ?? null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Content item save relationships
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Find an existing save relationship.
+   *
+   * The database identifies the relationship using:
+   * (contentItemId, userId).
+   */
+  public async findContentItemSave(userId: string, contentItemId: string) {
+    const [save] = await db
+      .select({
+        contentItemId: contentSaves.contentItemId,
+        userId: contentSaves.userId,
+        createdAt: contentSaves.createdAt,
+      })
+      .from(contentSaves)
+      .where(
+        and(
+          eq(contentSaves.userId, userId),
+          eq(contentSaves.contentItemId, contentItemId),
+        ),
+      )
+      .limit(1);
+
+    return save ?? null;
+  }
+
+  /**
+   * Determine whether a user has saved a content item.
+   */
+  public async isContentItemSaved(
+    userId: string,
+    contentItemId: string,
+  ): Promise<boolean> {
+    const [result] = await db
       .select({
         exists: sql<boolean>`true`,
       })
-      .from(postSaves)
-      .where(and(eq(postSaves.userId, userId), eq(postSaves.postId, postId)))
+      .from(contentSaves)
+      .where(
+        and(
+          eq(contentSaves.userId, userId),
+          eq(contentSaves.contentItemId, contentItemId),
+        ),
+      )
       .limit(1);
 
-    return result.length > 0;
+    return Boolean(result);
   }
 
-  async createSave(userId: string, postId: string) {
-    const result = await db
-      .insert(postSaves)
+  /**
+   * Create a save relationship for a Post or Article.
+   *
+   * The composite primary key prevents duplicate saves.
+   * Repeated save requests are therefore idempotent.
+   */
+  public async createContentItemSave(userId: string, contentItemId: string) {
+    const [save] = await db
+      .insert(contentSaves)
       .values({
         userId,
-        postId,
+        contentItemId,
       })
       .onConflictDoNothing({
-        target: [postSaves.postId, postSaves.userId],
+        target: [contentSaves.contentItemId, contentSaves.userId],
       })
       .returning({
-        postId: postSaves.postId,
-        userId: postSaves.userId,
-        createdAt: postSaves.createdAt,
+        contentItemId: contentSaves.contentItemId,
+        userId: contentSaves.userId,
+        createdAt: contentSaves.createdAt,
       });
 
-    return result[0] ?? null;
+    return save ?? null;
   }
 
-  async deleteSave(userId: string, postId: string) {
-    const result = await db
-      .delete(postSaves)
-      .where(and(eq(postSaves.userId, userId), eq(postSaves.postId, postId)))
+  /**
+   * Remove a save relationship.
+   *
+   * Returns null if the user has not saved this content item.
+   */
+  public async deleteContentItemSave(userId: string, contentItemId: string) {
+    const [deleted] = await db
+      .delete(contentSaves)
+      .where(
+        and(
+          eq(contentSaves.userId, userId),
+          eq(contentSaves.contentItemId, contentItemId),
+        ),
+      )
       .returning({
-        postId: postSaves.postId,
-        userId: postSaves.userId,
-        createdAt: postSaves.createdAt,
+        contentItemId: contentSaves.contentItemId,
+        userId: contentSaves.userId,
+        createdAt: contentSaves.createdAt,
       });
 
-    return result[0] ?? null;
+    return deleted ?? null;
   }
 
-  async getSavedPosts(userId: string, limit: number, cursor?: Date) {
-    const conditions = cursor
-      ? and(eq(postSaves.userId, userId), lt(postSaves.createdAt, cursor))
-      : eq(postSaves.userId, userId);
+  // ---------------------------------------------------------------------------
+  // Saved content pagination
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Retrieve saved Posts and Articles using stable cursor pagination.
+   *
+   * Ordering:
+   * 1. createdAt descending
+   * 2. contentItemId descending
+   *
+   * The ID is a deterministic tie-breaker when multiple saves
+   * share the same timestamp.
+   *
+   * PostgreSQL microseconds are preserved in cursorCreatedAt
+   * to prevent pagination inconsistencies caused by JavaScript
+   * Date precision loss.
+   */
+  public async getSavedContent(
+    userId: string,
+    limit: number,
+    cursor?: SavedContentCursor,
+  ) {
+    const conditions = [
+      eq(contentSaves.userId, userId),
+      inArray(contentItems.contentType, ["post", "article"]),
+    ];
+
+    if (cursor) {
+      conditions.push(
+        sql`(
+          ${contentSaves.createdAt} < ${cursor.createdAt}::timestamptz
+          OR (
+            ${contentSaves.createdAt} = ${cursor.createdAt}::timestamptz
+            AND ${contentSaves.contentItemId} < ${cursor.contentItemId}::uuid
+          )
+        )`,
+      );
+    }
 
     return db
       .select({
-        postId: postSaves.postId,
-        userId: postSaves.userId,
-        createdAt: postSaves.createdAt,
+        contentItemId: contentSaves.contentItemId,
+        contentType: contentItems.contentType,
+        userId: contentSaves.userId,
+        createdAt: contentSaves.createdAt,
+
+        cursorCreatedAt: sql<string>`
+          to_char(
+            ${contentSaves.createdAt} AT TIME ZONE 'UTC',
+            'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+          )
+        `,
       })
-      .from(postSaves)
-      .where(conditions)
-      .orderBy(desc(postSaves.createdAt))
+      .from(contentSaves)
+      .innerJoin(contentItems, eq(contentItems.id, contentSaves.contentItemId))
+      .where(and(...conditions))
+      .orderBy(desc(contentSaves.createdAt), desc(contentSaves.contentItemId))
+      .limit(limit);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Backward-compatible Post methods
+  // ---------------------------------------------------------------------------
+
+  /**
+   * @deprecated Use findContentItemSave().
+   */
+  public async findSave(userId: string, postId: string) {
+    const save = await this.findContentItemSave(userId, postId);
+
+    if (!save) {
+      return null;
+    }
+
+    return {
+      postId: save.contentItemId,
+      userId: save.userId,
+      createdAt: save.createdAt,
+    };
+  }
+
+  /**
+   * @deprecated Use isContentItemSaved().
+   */
+  public async isPostSaved(userId: string, postId: string): Promise<boolean> {
+    return this.isContentItemSaved(userId, postId);
+  }
+
+  /**
+   * @deprecated Use createContentItemSave().
+   */
+  public async createSave(userId: string, postId: string) {
+    const save = await this.createContentItemSave(userId, postId);
+
+    if (!save) {
+      return null;
+    }
+
+    return {
+      postId: save.contentItemId,
+      userId: save.userId,
+      createdAt: save.createdAt,
+    };
+  }
+
+  /**
+   * @deprecated Use deleteContentItemSave().
+   */
+  public async deleteSave(userId: string, postId: string) {
+    const deleted = await this.deleteContentItemSave(userId, postId);
+
+    if (!deleted) {
+      return null;
+    }
+
+    return {
+      postId: deleted.contentItemId,
+      userId: deleted.userId,
+      createdAt: deleted.createdAt,
+    };
+  }
+
+  /**
+   * @deprecated Use getSavedContent().
+   *
+   * This method deliberately returns Posts only, preserving
+   * the old saved-Posts API behavior.
+   */
+  public async getSavedPosts(
+    userId: string,
+    limit: number,
+    cursor?: SavedPostCursor,
+  ) {
+    const conditions = [
+      eq(contentSaves.userId, userId),
+      eq(contentItems.contentType, "post"),
+    ];
+
+    if (cursor) {
+      conditions.push(
+        sql`(
+          ${contentSaves.createdAt} < ${cursor.createdAt}::timestamptz
+          OR (
+            ${contentSaves.createdAt} = ${cursor.createdAt}::timestamptz
+            AND ${contentSaves.contentItemId} < ${cursor.postId}::uuid
+          )
+        )`,
+      );
+    }
+
+    return db
+      .select({
+        postId: contentSaves.contentItemId,
+        userId: contentSaves.userId,
+        createdAt: contentSaves.createdAt,
+
+        cursorCreatedAt: sql<string>`
+          to_char(
+            ${contentSaves.createdAt} AT TIME ZONE 'UTC',
+            'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+          )
+        `,
+      })
+      .from(contentSaves)
+      .innerJoin(contentItems, eq(contentItems.id, contentSaves.contentItemId))
+      .innerJoin(posts, eq(posts.id, contentItems.id))
+      .where(and(...conditions))
+      .orderBy(desc(contentSaves.createdAt), desc(contentSaves.contentItemId))
       .limit(limit);
   }
 }
