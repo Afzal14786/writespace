@@ -9,8 +9,6 @@ import {
   ForgotPasswordInput,
   ResetPasswordInput,
 } from "./dtos/password-reset.dto";
-import { UpdatePasswordInput } from "./dtos/update-password.dto";
-import { AppError } from "@shared/utils/app.error";
 import env from "@config/env";
 
 // Cookie Config (HttpOnly)
@@ -25,6 +23,47 @@ const REFRESH_COOKIE_OPTIONS = {
 };
 
 type EmptyParams = Record<string, never>;
+
+/**
+ * Returns a verified provider email.
+ * Prefer the primary address when multiple verified addresses exist.
+ */
+function getVerifiedOAuthEmail(emails: unknown): string | undefined {
+  if (!Array.isArray(emails)) {
+    return undefined;
+  }
+
+  const verifiedEmails: Array<{
+    value: string;
+    primary: boolean;
+  }> = [];
+
+  for (const item of emails) {
+    if (typeof item !== "object" || item === null) {
+      continue;
+    }
+
+    const candidate = item as Record<string, unknown>;
+
+    if (candidate.verified !== true || typeof candidate.value !== "string") {
+      continue;
+    }
+
+    const value = candidate.value.trim();
+
+    if (value.length > 0) {
+      verifiedEmails.push({
+        value,
+        primary: candidate.primary === true,
+      });
+    }
+  }
+
+  return (
+    verifiedEmails.find((email) => email.primary)?.value ??
+    verifiedEmails[0]?.value
+  );
+}
 
 export class AuthController {
   public async register(
@@ -123,17 +162,36 @@ export class AuthController {
   // 5. Logout
   public async logout(req: Request, res: Response, next: NextFunction) {
     try {
-      // We read the cookie directly to destroy the session.
-      // We DO NOT rely on req.user, because the access token might be expired.
-      const cookies = req.cookies as Record<string, string> | undefined;
-      const refreshToken = cookies?.refreshToken;
+      // Safely read a refresh token from an untrusted object.
+      const readRefreshToken = (source: unknown): string | undefined => {
+        if (
+          typeof source !== "object" ||
+          source === null ||
+          !("refreshToken" in source)
+        ) {
+          return undefined;
+        }
+
+        const token = source.refreshToken;
+
+        return typeof token === "string" && token.length > 0
+          ? token
+          : undefined;
+      };
+
+      // Prefer the HttpOnly cookie, with request-body fallback.
+      const cookieRefreshToken = readRefreshToken(req.cookies as unknown);
+      const bodyRefreshToken = readRefreshToken(req.body as unknown);
+
+      const refreshToken = cookieRefreshToken || bodyRefreshToken;
 
       if (refreshToken) {
-        // Pass just the token to the service to destroy it
         await authService.logout(refreshToken);
       }
 
+      // Clear the browser's refresh-token cookie.
       res.clearCookie("refreshToken");
+
       new ApiResponse(
         res,
         HTTP_STATUS.OK,
@@ -165,26 +223,14 @@ export class AuthController {
   ) {
     try {
       const { token, password } = req.body;
-      const result = await authService.resetPassword(token, password);
-      new ApiResponse(res, HTTP_STATUS.OK, result.message, null).send();
-    } catch (error) {
-      next(error);
-    }
-  }
+      await authService.resetPassword(token, password);
 
-  public async updatePassword(
-    req: Request<Record<string, never>, unknown, UpdatePasswordInput>,
-    res: Response,
-    next: NextFunction,
-  ) {
-    try {
-      if (!req.user) {
-        throw new AppError(HTTP_STATUS.UNAUTHORIZED, "Authentication required");
-      }
-
-      const result = await authService.updatePassword(req.user.id, req.body);
-
-      new ApiResponse(res, HTTP_STATUS.OK, result.message, null).send();
+      new ApiResponse(
+        res,
+        HTTP_STATUS.OK,
+        "Password reset successfully",
+        null,
+      ).send();
     } catch (error) {
       next(error);
     }
@@ -193,30 +239,34 @@ export class AuthController {
   public async googleCallback(req: Request, res: Response, next: NextFunction) {
     try {
       const driverUser = req.user;
+
       if (!driverUser) {
         res.redirect(`${env.CLIENT_URL}/auth/failed`);
+        return;
+      }
+
+      const email = getVerifiedOAuthEmail(driverUser.emails);
+
+      if (!email) {
+        res.redirect(
+          `${env.CLIENT_URL}/auth/failed?reason=verified_email_required`,
+        );
         return;
       }
 
       const profile = {
         provider: "google" as const,
         providerId: driverUser.id,
-        email: driverUser.emails?.[0]?.value || "",
+        email,
         displayName: driverUser.displayName || "Unknown User",
         picture: driverUser.photos?.[0]?.value,
       };
 
-      const { accessToken, refreshToken } =
-        await authService.googleAuth(profile);
+      const { refreshToken } = await authService.googleAuth(profile);
 
-      // Secure way to pass tokens to frontend:
-      // 1. Set Refresh Cookie
       res.cookie("refreshToken", refreshToken, REFRESH_COOKIE_OPTIONS);
 
-      // 2. Redirect with Access Token (or a temporary code)
-      // Ideally avoid tokens in URL, but for simple OAuth it's common.
-      // Better: Redirect to a frontend page that calls /refresh to get the token.
-      res.redirect(`${env.CLIENT_URL}/auth/success?token=${accessToken}`);
+      res.redirect(`${env.CLIENT_URL}/auth/success`);
     } catch (error) {
       next(error);
     }
@@ -225,25 +275,35 @@ export class AuthController {
   public async githubCallback(req: Request, res: Response, next: NextFunction) {
     try {
       const driverUser = req.user;
+
       if (!driverUser) {
         res.redirect(`${env.CLIENT_URL}/auth/failed`);
+        return;
+      }
+
+      const email = getVerifiedOAuthEmail(driverUser.emails);
+
+      if (!email) {
+        res.redirect(
+          `${env.CLIENT_URL}/auth/failed?reason=verified_email_required`,
+        );
         return;
       }
 
       const profile = {
         provider: "github" as const,
         providerId: driverUser.id,
-        email: driverUser.emails?.[0]?.value || "",
+        email,
         displayName:
           driverUser.displayName || driverUser.username || "GitHub User",
         picture: driverUser.photos?.[0]?.value,
       };
 
-      const { accessToken, refreshToken } =
-        await authService.githubAuth(profile);
+      const { refreshToken } = await authService.githubAuth(profile);
 
       res.cookie("refreshToken", refreshToken, REFRESH_COOKIE_OPTIONS);
-      res.redirect(`${env.CLIENT_URL}/auth/success?token=${accessToken}`);
+
+      res.redirect(`${env.CLIENT_URL}/auth/success`);
     } catch (error) {
       next(error);
     }
