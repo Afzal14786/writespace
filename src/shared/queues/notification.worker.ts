@@ -1,15 +1,21 @@
 import { Worker, type Job } from "bullmq";
-import env from "@config/env";
-import { db } from "../../db";
-import { notifications, users } from "../../db/schema";
 import { eq } from "drizzle-orm";
-import { type IInteractionJob } from "./interaction.queue";
+
+import env from "@config/env";
 import logger from "@config/logger";
 import { bullmqRedisConnection } from "@config/bullmq";
 
-export const interactionWorker = new Worker<IInteractionJob>(
-  "interaction-queue",
-  async (job: Job<IInteractionJob>) => {
+import { db } from "../../db";
+import { notifications, users } from "../../db/schema";
+
+import {
+  NOTIFICATION_QUEUE_NAME,
+  type NotificationJobData,
+} from "./notification.queue";
+
+export const notificationWorker = new Worker<NotificationJobData>(
+  NOTIFICATION_QUEUE_NAME,
+  async (job: Job<NotificationJobData>) => {
     const { recipientId, type, message, relatedId, actorId } = job.data;
 
     let finalMessage = message;
@@ -29,25 +35,22 @@ export const interactionWorker = new Worker<IInteractionJob>(
 
     await db.insert(notifications).values({
       recipientId,
-      actorId: actorId || null, // MUST BE ADDED
+      actorId: actorId || null,
       type,
       message: finalMessage,
-      relatedId: relatedId || null, // MUST FALLBACK TO NULL
+      relatedId: relatedId || null,
     });
   },
   {
     connection: bullmqRedisConnection,
-    concurrency: env.INTERACTION_WORKER_CONCURRENCY,
+    concurrency: env.NOTIFICATION_WORKER_CONCURRENCY,
   },
 );
 
-interactionWorker.on(
-  "failed",
-  (job: Job<IInteractionJob> | undefined, err: Error) => {
-    logger.error(`Interaction job ${job?.id} failed: ${err.message}`);
-  },
-);
+notificationWorker.on("failed", (job, error) => {
+  logger.error(`Notification job ${job?.id} failed: ${error.message}`);
+});
 
-interactionWorker.on("error", (error) => {
-  logger.error("Interaction worker error", { error });
+notificationWorker.on("error", (error) => {
+  logger.error("Notification worker error", { error });
 });
