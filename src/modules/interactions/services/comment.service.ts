@@ -2,6 +2,7 @@ import { AppError } from "@shared/utils/app.error";
 import { HTTP_STATUS } from "@shared/constants/http-codes";
 
 import { commentRepository } from "../repositories/comment.repository";
+import type { CommentCursor } from "../interface/comment.interface";
 
 export class CommentService {
   async createComment(
@@ -61,35 +62,43 @@ export class CommentService {
     return createdComment;
   }
 
+  /**
+   * Retrieves top-level comments using cursor-based pagination.
+   *
+   * One additional record is fetched to determine whether another
+   * page exists. The extra record is not included in the response.
+   */
   async getTopLevelComments(
     postId: string,
     limit: number = 20,
     cursor?: string,
     requesterId?: string,
   ) {
-    if (!Number.isInteger(limit) || limit <= 0) {
-      throw new AppError(
-        HTTP_STATUS.BAD_REQUEST,
-        "Limit must be a positive integer",
-      );
-    }
+    this.validateLimit(limit);
 
     const parsedCursor = this.parseCursor(cursor);
 
-    const comments = await commentRepository.getTopLevelComments(
+    const fetchedComments = await commentRepository.getTopLevelComments(
       postId,
-      limit,
+      limit + 1,
       parsedCursor,
       requesterId,
     );
 
+    const hasMore = fetchedComments.length > limit;
+    const pageComments = fetchedComments.slice(0, limit);
+    const lastComment = pageComments[pageComments.length - 1];
+
     const nextCursor =
-      comments.length === limit
-        ? (comments[comments.length - 1]?.createdAt?.toISOString() ?? null)
+      hasMore && lastComment
+        ? this.encodeCursor({
+            createdAt: lastComment.cursorCreatedAt,
+            id: lastComment.id,
+          })
         : null;
 
     return {
-      comments: comments.map((comment) => ({
+      comments: pageComments.map(({ cursorCreatedAt: _cursorCreatedAt, ...comment }) => ({
         ...comment,
         isReacted: Boolean(comment.reactionType),
         reactionType: comment.reactionType ?? null,
@@ -98,18 +107,20 @@ export class CommentService {
     };
   }
 
+  /**
+   * Retrieves direct replies to a comment using the same stable
+   * cursor-pagination strategy as top-level comments.
+   *
+   * This method can be called for any comment, allowing nested
+   * replies to be loaded recursively.
+   */
   async getCommentReplies(
     parentCommentId: string,
     limit: number = 20,
     cursor?: string,
     requesterId?: string,
   ) {
-    if (!Number.isInteger(limit) || limit <= 0) {
-      throw new AppError(
-        HTTP_STATUS.BAD_REQUEST,
-        "Limit must be a positive integer",
-      );
-    }
+    this.validateLimit(limit);
 
     const parentComment =
       await commentRepository.getCommentById(parentCommentId);
@@ -120,20 +131,27 @@ export class CommentService {
 
     const parsedCursor = this.parseCursor(cursor);
 
-    const replies = await commentRepository.getCommentReplies(
+    const fetchedReplies = await commentRepository.getCommentReplies(
       parentCommentId,
-      limit,
+      limit + 1,
       parsedCursor,
       requesterId,
     );
 
+    const hasMore = fetchedReplies.length > limit;
+    const pageReplies = fetchedReplies.slice(0, limit);
+    const lastReply = pageReplies[pageReplies.length - 1];
+
     const nextCursor =
-      replies.length === limit
-        ? (replies[replies.length - 1]?.createdAt?.toISOString() ?? null)
+      hasMore && lastReply
+        ? this.encodeCursor({
+            createdAt: lastReply.cursorCreatedAt,
+            id: lastReply.id,
+          })
         : null;
 
     return {
-      replies: replies.map((reply) => ({
+      replies: pageReplies.map(({ cursorCreatedAt: _cursorCreatedAt, ...reply }) => ({
         ...reply,
         isReacted: Boolean(reply.reactionType),
         reactionType: reply.reactionType ?? null,
@@ -225,18 +243,80 @@ export class CommentService {
     }
   }
 
-  private parseCursor(cursor?: string): Date | undefined {
+  /**
+   * Keeps the pagination input within a valid range.
+   *
+   * The default page size remains 20. A maximum of 100 prevents
+   * a client from requesting an unnecessarily large result set.
+   */
+  private validateLimit(limit: number): void {
+    if (!Number.isInteger(limit) || limit <= 0 || limit > 100) {
+      throw new AppError(
+        HTTP_STATUS.BAD_REQUEST,
+        "Limit must be an integer between 1 and 100",
+      );
+    }
+  }
+
+  /**
+   * Encodes the last returned comment's position into an opaque cursor.
+   * The frontend should pass this token back without modifying it.
+   */
+  private encodeCursor(cursor: CommentCursor): string {
+    return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+  }
+
+  /**
+   * Decodes and validates a cursor received from the client.
+   *
+   * The timestamp remains a string so PostgreSQL's microsecond
+   * precision is preserved when the next-page query is executed.
+   */
+  private parseCursor(cursor?: string): CommentCursor | undefined {
     if (!cursor) {
       return undefined;
     }
 
-    const parsedCursor = new Date(cursor);
+    try {
+      if (cursor.length > 512) {
+        throw new Error("Cursor is too long");
+      }
 
-    if (Number.isNaN(parsedCursor.getTime())) {
+      const decoded = Buffer.from(cursor, "base64url").toString("utf8");
+      const parsed: unknown = JSON.parse(decoded);
+
+      if (
+        typeof parsed !== "object" ||
+        parsed === null ||
+        !("createdAt" in parsed) ||
+        !("id" in parsed)
+      ) {
+        throw new Error("Invalid cursor structure");
+      }
+
+      const { createdAt, id } = parsed;
+
+      const validTimestamp =
+        typeof createdAt === "string" &&
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(
+          createdAt,
+        ) &&
+        !Number.isNaN(Date.parse(createdAt));
+
+      const validId =
+        typeof id === "string" &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+          id,
+        );
+
+      if (!validTimestamp || !validId) {
+        throw new Error("Invalid cursor values");
+      }
+
+      return { createdAt, id };
+    } catch {
       throw new AppError(HTTP_STATUS.BAD_REQUEST, "Invalid cursor");
     }
-
-    return parsedCursor;
   }
 }
 
