@@ -2,8 +2,8 @@ import morgan from "morgan";
 import logger from "@config/logger";
 
 const stream = {
-  write: (message: string) => {
-    logger.debug(message.trim());
+  write: (message: string): void => {
+    logger.info(message.trim());
   },
 };
 
