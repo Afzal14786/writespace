@@ -1,39 +1,41 @@
-import { Worker, type Job } from "bullmq";
+import { Worker } from "bullmq";
+
 import env from "@config/env";
-import { db } from "../../db";
-import { notifications, users } from "../../db/schema";
-import { eq } from "drizzle-orm";
-import { type IInteractionJob } from "./interaction.queue";
-import logger from "@config/logger";
 import { bullmqRedisConnection } from "@config/bullmq";
+import logger from "@config/logger";
 
-export const interactionWorker = new Worker<IInteractionJob>(
-  "interaction-queue",
-  async (job: Job<IInteractionJob>) => {
-    const { recipientId, type, message, relatedId, actorId } = job.data;
+import {
+  INTERACTION_QUEUE_NAME,
+  type InteractionEventJob,
+} from "../queues/interaction.queue";
 
-    let finalMessage = message;
+import { interactionEventRepository } from "../repositories/interaction-event.repository";
 
-    if (actorId) {
-      const [actor] = await db
-        .select({ fullname: users.fullname, username: users.username })
-        .from(users)
-        .where(eq(users.id, actorId))
-        .limit(1);
+export const interactionWorker = new Worker<InteractionEventJob>(
+  INTERACTION_QUEUE_NAME,
+  async (job) => {
+    const { eventId } = job.data;
 
-      if (actor) {
-        const displayName = actor.fullname || actor.username;
-        finalMessage = `${displayName} ${message}`;
-      }
+    if (!Number.isInteger(eventId) || eventId <= 0) {
+      throw new Error(`Invalid interaction event id: ${eventId}`);
     }
 
-    await db.insert(notifications).values({
-      recipientId,
-      actorId: actorId || null, // MUST BE ADDED
-      type,
-      message: finalMessage,
-      relatedId: relatedId || null, // MUST FALLBACK TO NULL
+    const event = await interactionEventRepository.getEventById(eventId);
+
+    if (!event) {
+      throw new Error(`Interaction event not found: ${eventId}`);
+    }
+
+    logger.info("Processing interaction event", {
+      jobId: job.id,
+      eventId: event.id,
+      eventType: event.eventType,
+      targetType: event.targetType,
+      targetId: event.targetId,
+      actorId: event.actorId,
     });
+
+    return;
   },
   {
     connection: bullmqRedisConnection,
@@ -41,13 +43,21 @@ export const interactionWorker = new Worker<IInteractionJob>(
   },
 );
 
-interactionWorker.on(
-  "failed",
-  (job: Job<IInteractionJob> | undefined, err: Error) => {
-    logger.error(`Interaction job ${job?.id} failed: ${err.message}`);
-  },
-);
+interactionWorker.on("completed", (job) => {
+  logger.info("Interaction job completed", {
+    jobId: job.id,
+  });
+});
+
+interactionWorker.on("failed", (job, error) => {
+  logger.error("Interaction job failed", {
+    jobId: job?.id,
+    error,
+  });
+});
 
 interactionWorker.on("error", (error) => {
-  logger.error("Interaction worker error", { error });
+  logger.error("Interaction worker error", {
+    error,
+  });
 });
