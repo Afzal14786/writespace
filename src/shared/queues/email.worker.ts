@@ -1,21 +1,33 @@
 import { Worker } from "bullmq";
+
 import { mailer } from "../infra/mailer";
 import env from "@config/env";
 import { bullmqRedisConnection } from "@config/bullmq";
-import { IEmailPayload } from "@modules/notification/interface/email.interface";
+
+import type { IEmailPayload } from "@modules/notification/interface/email.interface";
+import { EMAIL_QUEUE_NAME } from "./email.queue";
+
 import logger from "@config/logger";
 
-// 1. Create the Worker instance
+// Keep OTP email delivery aligned with the registration OTP expiration.
+const OTP_EXPIRE_MS = 10 * 60 * 1000;
+
 export const emailWorker = new Worker<IEmailPayload>(
-  "email-queue",
+  EMAIL_QUEUE_NAME,
   async (job) => {
-    // Check for stale OTP jobs (> 1 minute old)
     const now = Date.now();
     const jobAge = now - job.timestamp;
 
-    if (job.data.subject.includes("OTP") && jobAge > 60000) {
+    /*
+     * An OTP email must not be delivered after its corresponding
+     * registration code has expired.
+     */
+    if (
+      job.data.subject === "Verify Your Account - OTP" &&
+      jobAge > OTP_EXPIRE_MS
+    ) {
       logger.warn(
-        `Skipping stale OTP email job ${job.id} (Age: ${Math.round(jobAge / 1000)}s)`,
+        `Skipping expired OTP email job ${job.id} (Age: ${Math.round(jobAge / 1000)}s)`,
       );
       return;
     }
