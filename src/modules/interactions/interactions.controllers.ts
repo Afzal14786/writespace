@@ -27,22 +27,22 @@ interface ReactionBody {
 }
 
 class InteractionsController {
-  // ---------------------------------------------------------------------------
   // Comments
-  // ---------------------------------------------------------------------------
 
-  public addComment = async (
-    req: AuthRequest<AddCommentBody, unknown, { postId: string }>,
+  /**
+   * Add a comment or reply to a Post or Article.
+   *
+   * Uses the shared content_items identity.
+   */
+  public addContentItemComment = async (
+    req: AuthRequest<AddCommentBody, unknown, { contentItemId: string }>,
     res: Response,
     next: NextFunction,
   ) => {
     try {
-      const userId = req.user!.id;
-      const { postId } = req.params;
-
-      const comment = await interactionsService.createComment(
-        userId,
-        postId,
+      const comment = await interactionsService.createContentItemComment(
+        req.user!.id,
+        req.params.contentItemId,
         req.body,
       );
 
@@ -57,24 +57,27 @@ class InteractionsController {
     }
   };
 
-  public getTopLevelComments = async (
+  /**
+   * Retrieve top-level comments for a Post or Article.
+   */
+  public getContentItemComments = async (
     req: AuthRequest<
       unknown,
       {
         cursor?: string;
         limit?: string;
       },
-      { postId: string }
+      { contentItemId: string }
     >,
     res: Response,
     next: NextFunction,
   ) => {
     try {
-      const { postId } = req.params;
-      const limit = parseInt(req.query.limit || "20", 10);
+      const limit =
+        req.query.limit === undefined ? 20 : Number(req.query.limit);
 
-      const data = await interactionsService.getTopLevelComments(
-        postId,
+      const data = await interactionsService.getTopLevelContentItemComments(
+        req.params.contentItemId,
         limit,
         req.query.cursor,
         req.user?.id,
@@ -91,6 +94,72 @@ class InteractionsController {
     }
   };
 
+  /**
+   * Legacy Post-compatible comment endpoint.
+   */
+  public addComment = async (
+    req: AuthRequest<AddCommentBody, unknown, { postId: string }>,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const comment = await interactionsService.createComment(
+        req.user!.id,
+        req.params.postId,
+        req.body,
+      );
+
+      new ApiResponse(
+        res,
+        HTTP_STATUS.CREATED,
+        "Comment added successfully",
+        comment,
+      ).send();
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  /**
+   * Legacy Post-compatible comment listing endpoint.
+   */
+  public getTopLevelComments = async (
+    req: AuthRequest<
+      unknown,
+      {
+        cursor?: string;
+        limit?: string;
+      },
+      { postId: string }
+    >,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const limit =
+        req.query.limit === undefined ? 20 : Number(req.query.limit);
+
+      const data = await interactionsService.getTopLevelComments(
+        req.params.postId,
+        limit,
+        req.query.cursor,
+        req.user?.id,
+      );
+
+      new ApiResponse(
+        res,
+        HTTP_STATUS.OK,
+        "Comments fetched successfully",
+        data,
+      ).send();
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  /**
+   * Retrieve replies for a comment.
+   */
   public getCommentReplies = async (
     req: AuthRequest<
       unknown,
@@ -104,11 +173,11 @@ class InteractionsController {
     next: NextFunction,
   ) => {
     try {
-      const { commentId } = req.params;
-      const limit = parseInt(req.query.limit || "20", 10);
+      const limit =
+        req.query.limit === undefined ? 20 : Number(req.query.limit);
 
       const data = await interactionsService.getCommentReplies(
-        commentId,
+        req.params.commentId,
         limit,
         req.query.cursor,
         req.user?.id,
@@ -125,6 +194,9 @@ class InteractionsController {
     }
   };
 
+  /**
+   * Retrieve a specific comment.
+   */
   public getCommentById = async (
     req: AuthRequest<unknown, unknown, { commentId: string }>,
     res: Response,
@@ -147,6 +219,9 @@ class InteractionsController {
     }
   };
 
+  /**
+   * Update a comment.
+   */
   public updateComment = async (
     req: AuthRequest<{ content: string }, unknown, { commentId: string }>,
     res: Response,
@@ -170,6 +245,9 @@ class InteractionsController {
     }
   };
 
+  /**
+   * Delete a comment.
+   */
   public deleteComment = async (
     req: AuthRequest<unknown, unknown, { commentId: string }>,
     res: Response,
@@ -193,9 +271,7 @@ class InteractionsController {
     }
   };
 
-  // ---------------------------------------------------------------------------
   // Reactions
-  // ---------------------------------------------------------------------------
 
   public setPostReaction = async (
     req: AuthRequest<ReactionBody, unknown, { postId: string }>,
@@ -287,9 +363,7 @@ class InteractionsController {
     }
   };
 
-  // ---------------------------------------------------------------------------
   // Follow
-  // ---------------------------------------------------------------------------
 
   public followUser = async (
     req: AuthRequest<unknown, unknown, { userId: string }>,
@@ -357,10 +431,96 @@ class InteractionsController {
     }
   };
 
-  // ---------------------------------------------------------------------------
   // Saves
-  // ---------------------------------------------------------------------------
 
+  /**
+   * Save a Post or Article.
+   */
+  public saveContentItem = async (
+    req: AuthRequest<unknown, unknown, { contentItemId: string }>,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const result = await interactionsService.saveContentItem(
+        req.user!.id,
+        req.params.contentItemId,
+      );
+
+      new ApiResponse(
+        res,
+        HTTP_STATUS.OK,
+        "Content saved successfully",
+        result,
+      ).send();
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  /**
+   * Remove a saved Post or Article.
+   */
+  public unsaveContentItem = async (
+    req: AuthRequest<unknown, unknown, { contentItemId: string }>,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const result = await interactionsService.unsaveContentItem(
+        req.user!.id,
+        req.params.contentItemId,
+      );
+
+      new ApiResponse(
+        res,
+        HTTP_STATUS.OK,
+        "Content unsaved successfully",
+        result,
+      ).send();
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  /**
+   * Retrieve the current user's saved Posts and Articles.
+   */
+  public getSavedContent = async (
+    req: AuthRequest<
+      unknown,
+      {
+        cursor?: string;
+        limit?: string;
+      }
+    >,
+    res: Response,
+    next: NextFunction,
+  ) => {
+    try {
+      const limit =
+        req.query.limit === undefined ? 20 : Number(req.query.limit);
+
+      const data = await interactionsService.getSavedContent({
+        userId: req.user!.id,
+        limit,
+        cursor: req.query.cursor,
+      });
+
+      new ApiResponse(
+        res,
+        HTTP_STATUS.OK,
+        "Saved content fetched successfully",
+        data,
+      ).send();
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  /**
+   * Legacy Post-specific save endpoint.
+   */
   public savePost = async (
     req: AuthRequest<unknown, unknown, { postId: string }>,
     res: Response,
@@ -383,6 +543,9 @@ class InteractionsController {
     }
   };
 
+  /**
+   * Legacy Post-specific unsave endpoint.
+   */
   public unsavePost = async (
     req: AuthRequest<unknown, unknown, { postId: string }>,
     res: Response,
@@ -405,6 +568,9 @@ class InteractionsController {
     }
   };
 
+  /**
+   * Retrieve only saved Posts through the legacy API.
+   */
   public getSavedPosts = async (
     req: AuthRequest<
       unknown,
@@ -417,7 +583,8 @@ class InteractionsController {
     next: NextFunction,
   ) => {
     try {
-      const limit = parseInt(req.query.limit || "20", 10);
+      const limit =
+        req.query.limit === undefined ? 20 : Number(req.query.limit);
 
       const data = await interactionsService.getSavedPosts({
         userId: req.user!.id,
@@ -436,9 +603,7 @@ class InteractionsController {
     }
   };
 
-  // ---------------------------------------------------------------------------
   // Shares
-  // ---------------------------------------------------------------------------
 
   public createShare = async (
     req: AuthRequest<{ platform: string }, unknown, { postId: string }>,
@@ -476,7 +641,8 @@ class InteractionsController {
     next: NextFunction,
   ) => {
     try {
-      const limit = parseInt(req.query.limit || "20", 10);
+      const limit =
+        req.query.limit === undefined ? 20 : Number(req.query.limit);
 
       const shares = await interactionsService.getPostShares(
         req.params.postId,
