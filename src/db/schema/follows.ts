@@ -1,85 +1,37 @@
 import {
-  pgTable,
-  uuid,
-  timestamp,
-  primaryKey,
   index,
+  pgTable,
+  primaryKey,
+  timestamp,
+  uuid,
 } from "drizzle-orm/pg-core";
 
 import { users } from "./users";
 
+/**
+ * Directed user-to-user follow relationship.
+ *
+ * The composite primary key prevents duplicate follows and supports lookups
+ * by follower. The second index supports the reverse "who follows this user"
+ * access pattern, commonly ordered by the time the follow was created.
+ */
 export const follows = pgTable(
   "follows",
   {
-    /**
-     * The user who initiates the follow relationship.
-     *
-     * Example:
-     * Afzal → Meenal
-     *
-     * followerId = Afzal
-     */
     followerId: uuid("follower_id")
       .notNull()
-      .references(() => users.id, {
-        onDelete: "cascade",
-      }),
+      .references(() => users.id, { onDelete: "cascade" }),
 
-    /**
-     * The user being followed.
-     *
-     * Example:
-     * Afzal → Meenal
-     *
-     * followingId = Meenal
-     */
     followingId: uuid("following_id")
       .notNull()
-      .references(() => users.id, {
-        onDelete: "cascade",
-      }),
+      .references(() => users.id, { onDelete: "cascade" }),
 
-    /**
-     * When the follow relationship was created.
-     */
-    createdAt: timestamp("created_at").defaultNow().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
   },
-
   (table) => [
-    /**
-     * Decision:
-     *
-     * A user can follow another user only once.
-     *
-     * This also gives us an index beginning with followerId,
-     * which efficiently supports:
-     *
-     * "Who does this user follow?"
-     *
-     * Example:
-     * WHERE follower_id = Afzal
-     */
-    primaryKey({
-      columns: [table.followerId, table.followingId],
-    }),
-
-    /**
-     * Decision:
-     *
-     * We also need the reverse access pattern:
-     *
-     * "Who follows this user?"
-     *
-     * That query filters by followingId and commonly orders
-     * or paginates by createdAt.
-     *
-     * The primary key cannot efficiently serve a query whose
-     * leading column is only followingId, so we add this index.
-     *
-     * Example:
-     * WHERE following_id = Meenal
-     * ORDER BY created_at DESC
-     */
+    primaryKey({ columns: [table.followerId, table.followingId] }),
     index("follows_following_created_idx").on(
       table.followingId,
       table.createdAt,
