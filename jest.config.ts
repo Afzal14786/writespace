@@ -10,6 +10,7 @@ const config: Config = {
     '^@modules/(.*)$': '<rootDir>/src/modules/$1',
     '^@config/(.*)$': '<rootDir>/src/config/$1',
     '^@shared/(.*)$': '<rootDir>/src/shared/$1',
+    '^@db/(.*)$': '<rootDir>/src/db/$1',
   },
   setupFilesAfterEnv: [],
   verbose: true,
