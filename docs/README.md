@@ -1,3 +1,13 @@
+<div align="center">
+  <img
+    src="assets/logo.png"
+    width="100%"
+    alt="Writespace — Social Blogging Platform"
+  />
+</div>
+
+<br/>
+
 # Writespace Documentation
 
 Welcome to the technical documentation for **Writespace**.
