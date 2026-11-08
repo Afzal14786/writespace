@@ -1,6 +1,6 @@
 # Base image
 
-FROM node:24-bookworm-slim AS base
+FROM node:25-bookworm-slim AS base
 
 WORKDIR /app
 
