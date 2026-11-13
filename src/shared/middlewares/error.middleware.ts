@@ -25,7 +25,6 @@ export const errorHandler = (
   res: Response,
   _next: NextFunction,
 ): void => {
-
   if (res.headersSent) {
     _next(err);
     return;

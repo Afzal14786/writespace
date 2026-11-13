@@ -24,7 +24,6 @@ cloudinary.config({
   api_secret: env.CLOUDINARY_API_SECRET,
 });
 
-
 const ALLOWED_IMAGE_EXTENSIONS = new Set([
   ".jpg",
   ".jpeg",
@@ -51,11 +50,9 @@ const fileFilter = (
   const extension = path.extname(file.originalname).toLowerCase();
   const mimeType = file.mimetype.toLowerCase();
 
-  const isAllowedExtension =
-    ALLOWED_IMAGE_EXTENSIONS.has(extension);
+  const isAllowedExtension = ALLOWED_IMAGE_EXTENSIONS.has(extension);
 
-  const isAllowedMimeType =
-    ALLOWED_IMAGE_MIME_TYPES.has(mimeType);
+  const isAllowedMimeType = ALLOWED_IMAGE_MIME_TYPES.has(mimeType);
 
   if (isAllowedExtension && isAllowedMimeType) {
     cb(null, true);
