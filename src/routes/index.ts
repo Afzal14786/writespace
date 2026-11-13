@@ -7,6 +7,7 @@ import { articlesRoutes } from "@modules/articles/articles.routes";
 import { aiRoutes } from "@modules/ai/ai.routes";
 import { notificationRoutes } from "@modules/notification/notification.routes";
 import { interactionsRoutes } from "@modules/interactions/interactions.routes";
+import { notificationPreferenceRoutes } from "@modules/notification/notification-preference.routes";
 
 const router = Router();
 
@@ -30,6 +31,7 @@ router.use("/articles", articlesRoutes);
  */
 router.use("/ai", aiRoutes);
 router.use("/notifications", notificationRoutes);
+router.use("/notification-preferences", notificationPreferenceRoutes);
 router.use("/interactions", interactionsRoutes);
 
 export default router;
