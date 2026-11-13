@@ -1,3 +1,7 @@
+import env from "@config/env";
+import { db } from "../../../db";
+import { eventPublisherService } from "@modules/notification/services/event-publisher.service";
+
 import { AppError } from "@shared/utils/app.error";
 import { HTTP_STATUS } from "@shared/constants/http-codes";
 
@@ -7,14 +11,15 @@ import type { CommentCursor } from "../interface/comment.interface";
 export class CommentService {
   async createComment(
     userId: string,
-    postId: string,
+    contentItemId: string,
     content: string,
     parentCommentId?: string | null,
   ) {
-    const post = await commentRepository.findPostForComment(postId);
+    const contentItem =
+      await commentRepository.findContentItemForComment(contentItemId);
 
-    if (!post) {
-      throw new AppError(HTTP_STATUS.NOT_FOUND, "Post not found");
+    if (!contentItem) {
+      throw new AppError(HTTP_STATUS.NOT_FOUND, "Content not found");
     }
 
     if (parentCommentId) {
@@ -25,20 +30,73 @@ export class CommentService {
         throw new AppError(HTTP_STATUS.NOT_FOUND, "Parent comment not found");
       }
 
-      if (parentComment.postId !== postId) {
+      if (parentComment.contentItemId !== contentItemId) {
         throw new AppError(
           HTTP_STATUS.BAD_REQUEST,
-          "Parent comment does not belong to this post",
+          "Parent comment does not belong to this content item",
         );
       }
     }
 
-    const comment = await commentRepository.createComment(
-      postId,
-      userId,
-      content,
-      parentCommentId,
-    );
+    const comment = await db.transaction(async (transaction) => {
+      const createdComment = await commentRepository.createComment(
+        contentItemId,
+        userId,
+        content,
+        parentCommentId,
+        transaction,
+      );
+
+      /*
+       * Record the appropriate domain event in the same transaction as
+       * the comment and counter updates.
+       *
+       * Top-level comments and replies have separate event contracts so
+       * notification recipients can be resolved correctly.
+       */
+      if (env.OUTBOX_PROCESSING_ENABLED) {
+        if (parentCommentId) {
+          await eventPublisherService.recordInTransaction(transaction, {
+            eventName: "comment.replied",
+            eventVersion: 1,
+            producer: "interactions.comments",
+
+            aggregate: {
+              type: "comment",
+              id: createdComment.id,
+            },
+
+            actorId: userId,
+
+            payload: {
+              contentItemId,
+              commentId: createdComment.id,
+              parentCommentId,
+            },
+          });
+        } else {
+          await eventPublisherService.recordInTransaction(transaction, {
+            eventName: "comment.created",
+            eventVersion: 1,
+            producer: "interactions.comments",
+
+            aggregate: {
+              type: "comment",
+              id: createdComment.id,
+            },
+
+            actorId: userId,
+
+            payload: {
+              contentItemId,
+              commentId: createdComment.id,
+            },
+          });
+        }
+      }
+
+      return createdComment;
+    });
 
     if (!comment) {
       throw new AppError(
@@ -69,7 +127,7 @@ export class CommentService {
    * page exists. The extra record is not included in the response.
    */
   async getTopLevelComments(
-    postId: string,
+    contentItemId: string,
     limit: number = 20,
     cursor?: string,
     requesterId?: string,
@@ -79,7 +137,7 @@ export class CommentService {
     const parsedCursor = this.parseCursor(cursor);
 
     const fetchedComments = await commentRepository.getTopLevelComments(
-      postId,
+      contentItemId,
       limit + 1,
       parsedCursor,
       requesterId,
@@ -98,11 +156,13 @@ export class CommentService {
         : null;
 
     return {
-      comments: pageComments.map(({ cursorCreatedAt: _cursorCreatedAt, ...comment }) => ({
-        ...comment,
-        isReacted: Boolean(comment.reactionType),
-        reactionType: comment.reactionType ?? null,
-      })),
+      comments: pageComments.map(
+        ({ cursorCreatedAt: _cursorCreatedAt, ...comment }) => ({
+          ...comment,
+          isReacted: Boolean(comment.reactionType),
+          reactionType: comment.reactionType ?? null,
+        }),
+      ),
       nextCursor,
     };
   }
@@ -151,11 +211,13 @@ export class CommentService {
         : null;
 
     return {
-      replies: pageReplies.map(({ cursorCreatedAt: _cursorCreatedAt, ...reply }) => ({
-        ...reply,
-        isReacted: Boolean(reply.reactionType),
-        reactionType: reply.reactionType ?? null,
-      })),
+      replies: pageReplies.map(
+        ({ cursorCreatedAt: _cursorCreatedAt, ...reply }) => ({
+          ...reply,
+          isReacted: Boolean(reply.reactionType),
+          reactionType: reply.reactionType ?? null,
+        }),
+      ),
       nextCursor,
     };
   }
@@ -187,7 +249,8 @@ export class CommentService {
       );
     }
 
-    const comment = await commentRepository.getCommentById(commentId);
+    const comment =
+      await commentRepository.getCommentByIdForManagement(commentId);
 
     if (!comment) {
       throw new AppError(HTTP_STATUS.NOT_FOUND, "Comment not found");
@@ -212,7 +275,23 @@ export class CommentService {
       );
     }
 
-    return this.getCommentById(commentId, userId);
+    const updatedComment = await commentRepository.getCommentByIdForManagement(
+      commentId,
+      userId,
+    );
+
+    if (!updatedComment) {
+      throw new AppError(
+        HTTP_STATUS.INTERNAL_SERVER_ERROR,
+        "Failed to fetch updated comment",
+      );
+    }
+
+    return {
+      ...updatedComment,
+      isReacted: Boolean(updatedComment.reactionType),
+      reactionType: updatedComment.reactionType ?? null,
+    };
   }
 
   async deleteComment(
@@ -220,7 +299,8 @@ export class CommentService {
     commentId: string,
     isAdmin: boolean = false,
   ): Promise<void> {
-    const comment = await commentRepository.getCommentById(commentId);
+    const comment =
+      await commentRepository.getCommentByIdForManagement(commentId);
 
     if (!comment) {
       throw new AppError(HTTP_STATUS.NOT_FOUND, "Comment not found");
@@ -298,9 +378,7 @@ export class CommentService {
 
       const validTimestamp =
         typeof createdAt === "string" &&
-        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(
-          createdAt,
-        ) &&
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(createdAt) &&
         !Number.isNaN(Date.parse(createdAt));
 
       const validId =
