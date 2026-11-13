@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">Writespace app icon</title>
+  <rect width="512" height="512" rx="112" fill="#191638"/>
+  <path d="M112 154 L184 358 L256 230 L328 358 L400 154" fill="none" stroke="#FFFFFF" stroke-width="38" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M256 230 L328 358" fill="none" stroke="#FF765E" stroke-width="38" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="390" cy="110" r="18" fill="#897AF0"/>
+</svg>

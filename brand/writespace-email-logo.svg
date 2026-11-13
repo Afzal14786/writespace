@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="190" viewBox="0 0 760 190" role="img" aria-labelledby="title desc">
+  <title id="title">Writespace</title>
+  <desc id="desc">Writespace wordmark and open-page W symbol.</desc>
+  <g transform="translate(0,0) scale(0.94)"><g>
+  <rect x="12" y="12" width="160" height="160" rx="38" fill="#191638"/>
+  <path d="M43 57 L67 126 L92 82 L117 126 L141 57"
+        fill="none" stroke="#FFFFFF" stroke-width="13"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M92 82 L117 126" fill="none" stroke="#FF765E"
+        stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="137" cy="40" r="6" fill="#897AF0"/>
+</g></g>
+  <text x="204" y="119" font-family="Georgia, 'Times New Roman', serif" font-size="79" font-weight="400" letter-spacing="4.5">
+    <tspan fill="#928C86">WRITE</tspan><tspan fill="#FF765E">SPACE</tspan>
+  </text>
+</svg>
