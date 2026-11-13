@@ -1,5 +1,8 @@
 import { Buffer } from "node:buffer";
 
+import env from "@config/env";
+import { db } from "../../../db";
+import { eventPublisherService } from "@modules/notification/services/event-publisher.service";
 import { AppError } from "@shared/utils/app.error";
 import { HTTP_STATUS } from "@shared/constants/http-codes";
 import logger from "@config/logger";
@@ -200,13 +203,44 @@ export class SaveService {
   ): Promise<SavedContentResult> {
     const { actorId, contentItemId } = input;
 
-    // Verify the content item before creating a save relationship.
     await this.ensureContentItemExists(contentItemId);
 
-    const saved = await saveRepository.createContentItemSave(
-      actorId,
-      contentItemId,
-    );
+    /*
+     * When the new pipeline is enabled, the save relationship and outbox
+     * event must commit together.
+     *
+     * When disabled, preserve the existing repository behavior.
+     */
+    const saved = env.OUTBOX_PROCESSING_ENABLED
+      ? await db.transaction(async (transaction) => {
+          const created = await saveRepository.createContentItemSave(
+            actorId,
+            contentItemId,
+            transaction,
+          );
+
+          // Duplicate save requests are idempotent.
+          if (!created) {
+            return null;
+          }
+
+          await eventPublisherService.recordInTransaction(transaction, {
+            eventName: "save.created",
+            eventVersion: 1,
+            producer: "interactions",
+            aggregate: {
+              type: "content_item",
+              id: contentItemId,
+            },
+            actorId,
+            payload: {
+              contentItemId,
+            },
+          });
+
+          return created;
+        })
+      : await saveRepository.createContentItemSave(actorId, contentItemId);
 
     if (!saved) {
       return {
@@ -217,7 +251,9 @@ export class SaveService {
     }
 
     /*
-     * Publish an event only when the database state actually changes.
+     * Keep interaction history separate from notification processing.
+     * This historical record is best-effort and is written after the
+     * save and its outbox event have committed.
      */
     try {
       const event = interactionEventMapper.mapSaveEvent("save.created", {
@@ -227,7 +263,7 @@ export class SaveService {
 
       await interactionEventPublisher.publish(event);
     } catch (error: unknown) {
-      logger.error("Failed to publish save.created event", {
+      logger.error("Failed to publish save.created interaction history", {
         actorId,
         contentItemId,
         error: error instanceof Error ? error.message : String(error),
@@ -252,10 +288,36 @@ export class SaveService {
   ): Promise<SavedContentResult> {
     const { actorId, contentItemId } = input;
 
-    const saved = await saveRepository.deleteContentItemSave(
-      actorId,
-      contentItemId,
-    );
+    const saved = env.OUTBOX_PROCESSING_ENABLED
+      ? await db.transaction(async (transaction) => {
+          const deleted = await saveRepository.deleteContentItemSave(
+            actorId,
+            contentItemId,
+            transaction,
+          );
+
+          // Removing a nonexistent save is idempotent.
+          if (!deleted) {
+            return null;
+          }
+
+          await eventPublisherService.recordInTransaction(transaction, {
+            eventName: "save.removed",
+            eventVersion: 1,
+            producer: "interactions",
+            aggregate: {
+              type: "content_item",
+              id: contentItemId,
+            },
+            actorId,
+            payload: {
+              contentItemId,
+            },
+          });
+
+          return deleted;
+        })
+      : await saveRepository.deleteContentItemSave(actorId, contentItemId);
 
     if (!saved) {
       return {
@@ -273,7 +335,7 @@ export class SaveService {
 
       await interactionEventPublisher.publish(event);
     } catch (error: unknown) {
-      logger.error("Failed to publish save.removed event", {
+      logger.error("Failed to publish save.removed interaction history", {
         actorId,
         contentItemId,
         error: error instanceof Error ? error.message : String(error),
@@ -355,75 +417,30 @@ export class SaveService {
 
     await this.ensurePostExists(postId);
 
-    const saved = await saveRepository.createSave(actorId, postId);
-
-    if (!saved) {
-      return {
-        userId: actorId,
-        postId,
-        isSaved: true,
-      };
-    }
-
-    try {
-      const event = interactionEventMapper.mapSaveEvent("save.created", {
-        actorId,
-        postId,
-      });
-
-      await interactionEventPublisher.publish(event);
-    } catch (error: unknown) {
-      logger.error("Failed to publish save.created event", {
-        actorId,
-        postId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
+    const saved = await this.saveContentItem({
+      actorId,
+      contentItemId: postId,
+    });
 
     return {
       userId: saved.userId,
-      postId: saved.postId,
-      isSaved: true,
+      postId: saved.contentItemId,
+      isSaved: saved.isSaved,
     };
   }
 
-  /**
-   * Remove a saved Post using the existing Post-specific contract.
-   *
-   * New application code should use unsaveContentItem().
-   */
   public async unsavePost(input: UnsavePostInput): Promise<SavedPostResult> {
     const { actorId, postId } = input;
 
-    const saved = await saveRepository.deleteSave(actorId, postId);
-
-    if (!saved) {
-      return {
-        userId: actorId,
-        postId,
-        isSaved: false,
-      };
-    }
-
-    try {
-      const event = interactionEventMapper.mapSaveEvent("save.removed", {
-        actorId,
-        postId,
-      });
-
-      await interactionEventPublisher.publish(event);
-    } catch (error: unknown) {
-      logger.error("Failed to publish save.removed event", {
-        actorId,
-        postId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
+    const saved = await this.unsaveContentItem({
+      actorId,
+      contentItemId: postId,
+    });
 
     return {
       userId: saved.userId,
-      postId: saved.postId,
-      isSaved: false,
+      postId: saved.contentItemId,
+      isSaved: saved.isSaved,
     };
   }
 
