@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 
-import { db } from "../../../db";
+import { db, type DatabaseTransaction } from "../../../db";
 
 import {
   articles,
@@ -23,9 +23,7 @@ export interface SavedContentCursor {
 }
 
 export class SaveRepository {
-  // ---------------------------------------------------------------------------
   // Content item validation
-  // ---------------------------------------------------------------------------
 
   /**
    * Check whether a content item exists and has a valid content subtype.
@@ -93,9 +91,7 @@ export class SaveRepository {
     return result ?? null;
   }
 
-  // ---------------------------------------------------------------------------
   // Content item save relationships
-  // ---------------------------------------------------------------------------
 
   /**
    * Find an existing save relationship.
@@ -145,14 +141,12 @@ export class SaveRepository {
     return Boolean(result);
   }
 
-  /**
-   * Create a save relationship for a Post or Article.
-   *
-   * The composite primary key prevents duplicate saves.
-   * Repeated save requests are therefore idempotent.
-   */
-  public async createContentItemSave(userId: string, contentItemId: string) {
-    const [save] = await db
+  private async createContentItemSaveInTransaction(
+    transaction: DatabaseTransaction,
+    userId: string,
+    contentItemId: string,
+  ) {
+    const [save] = await transaction
       .insert(contentSaves)
       .values({
         userId,
@@ -171,12 +165,35 @@ export class SaveRepository {
   }
 
   /**
-   * Remove a save relationship.
+   * Create a save relationship for a Post or Article.
    *
-   * Returns null if the user has not saved this content item.
+   * When a caller supplies a transaction, the save participates in that
+   * transaction. Otherwise, the repository owns a transaction.
    */
-  public async deleteContentItemSave(userId: string, contentItemId: string) {
-    const [deleted] = await db
+  public async createContentItemSave(
+    userId: string,
+    contentItemId: string,
+    transaction?: DatabaseTransaction,
+  ) {
+    if (transaction) {
+      return this.createContentItemSaveInTransaction(
+        transaction,
+        userId,
+        contentItemId,
+      );
+    }
+
+    return db.transaction((tx) =>
+      this.createContentItemSaveInTransaction(tx, userId, contentItemId),
+    );
+  }
+
+  private async deleteContentItemSaveInTransaction(
+    transaction: DatabaseTransaction,
+    userId: string,
+    contentItemId: string,
+  ) {
+    const [deleted] = await transaction
       .delete(contentSaves)
       .where(
         and(
@@ -193,9 +210,30 @@ export class SaveRepository {
     return deleted ?? null;
   }
 
-  // ---------------------------------------------------------------------------
+  /**
+   * Remove a save relationship.
+   *
+   * Returns null if the user has not saved this content item.
+   */
+  public async deleteContentItemSave(
+    userId: string,
+    contentItemId: string,
+    transaction?: DatabaseTransaction,
+  ) {
+    if (transaction) {
+      return this.deleteContentItemSaveInTransaction(
+        transaction,
+        userId,
+        contentItemId,
+      );
+    }
+
+    return db.transaction((tx) =>
+      this.deleteContentItemSaveInTransaction(tx, userId, contentItemId),
+    );
+  }
+
   // Saved content pagination
-  // ---------------------------------------------------------------------------
 
   /**
    * Retrieve saved Posts and Articles using stable cursor pagination.
@@ -254,9 +292,7 @@ export class SaveRepository {
       .limit(limit);
   }
 
-  // ---------------------------------------------------------------------------
   // Backward-compatible Post methods
-  // ---------------------------------------------------------------------------
 
   /**
    * @deprecated Use findContentItemSave().
@@ -285,8 +321,12 @@ export class SaveRepository {
   /**
    * @deprecated Use createContentItemSave().
    */
-  public async createSave(userId: string, postId: string) {
-    const save = await this.createContentItemSave(userId, postId);
+  public async createSave(
+    userId: string,
+    postId: string,
+    transaction?: DatabaseTransaction,
+  ) {
+    const save = await this.createContentItemSave(userId, postId, transaction);
 
     if (!save) {
       return null;
@@ -299,11 +339,16 @@ export class SaveRepository {
     };
   }
 
-  /**
-   * @deprecated Use deleteContentItemSave().
-   */
-  public async deleteSave(userId: string, postId: string) {
-    const deleted = await this.deleteContentItemSave(userId, postId);
+  public async deleteSave(
+    userId: string,
+    postId: string,
+    transaction?: DatabaseTransaction,
+  ) {
+    const deleted = await this.deleteContentItemSave(
+      userId,
+      postId,
+      transaction,
+    );
 
     if (!deleted) {
       return null;
