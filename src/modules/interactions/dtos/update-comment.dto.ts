@@ -10,6 +10,4 @@ export const updateCommentSchema = z.object({
   }),
 });
 
-export type UpdateCommentDto = z.infer<
-  typeof updateCommentSchema
->["body"];
+export type UpdateCommentDto = z.infer<typeof updateCommentSchema>["body"];
