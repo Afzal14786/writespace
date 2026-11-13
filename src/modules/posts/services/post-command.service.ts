@@ -1,6 +1,8 @@
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import env from "@config/env";
+import { eventPublisherService } from "@modules/notification/services/event-publisher.service";
 
-import { db } from "../../../db";
+import { db, type DatabaseTransaction } from "../../../db";
 import {
   contentItems,
   contentMentions,
@@ -69,6 +71,43 @@ class PostCommandService {
           "You cannot attach media that does not belong to your account",
         );
       }
+    }
+  }
+
+  /**
+   * Record one mention event for each eligible mentioned user.
+   *
+   * Events are written through the caller's transaction so they cannot
+   * survive if the associated Post or mention records roll back.
+   */
+  private async recordMentionCreatedEvents(
+    transaction: DatabaseTransaction,
+    contentItemId: string,
+    authorId: string,
+    mentionedUserIds: string[],
+  ): Promise<void> {
+    if (!env.OUTBOX_PROCESSING_ENABLED || mentionedUserIds.length === 0) {
+      return;
+    }
+
+    for (const mentionedUserId of mentionedUserIds) {
+      await eventPublisherService.recordInTransaction(transaction, {
+        eventName: "mention.created",
+        eventVersion: 1,
+        producer: "posts.commands",
+
+        aggregate: {
+          type: "content_item",
+          id: contentItemId,
+        },
+
+        actorId: authorId,
+
+        payload: {
+          contentItemId,
+          mentionedUserId,
+        },
+      });
     }
   }
 
@@ -240,6 +279,17 @@ class PostCommandService {
               contentItemId: postId,
               mentionedUserId,
             })),
+          );
+        }
+
+        // Only initially published Posts notify their mentioned users.
+        // Draft and scheduled Posts will notify mentions when published.
+        if (lifecycle.status === PostStatus.PUBLISHED) {
+          await this.recordMentionCreatedEvents(
+            tx,
+            postId,
+            authorId,
+            mentionedUserIds,
           );
         }
 
@@ -499,6 +549,41 @@ class PostCommandService {
             );
           }
         }
+
+        /*
+         * Determine which mentions have become eligible for notification.
+         *
+         * Publishing a previously unpublished Post notifies every current
+         * mention. Editing an already-published Post only notifies users
+         * newly introduced in the updated content document.
+         */
+        let mentionUserIdsToNotify: string[] = [];
+
+        if (nextLifecycle.status === PostStatus.PUBLISHED) {
+          if (currentStatus !== PostStatus.PUBLISHED) {
+            // First publication: all current mentions become eligible.
+            mentionUserIdsToNotify =
+              nextMentionedUserIds ??
+              collectMentionedUserIds(post.contentDocument);
+          } else if (nextMentionedUserIds !== undefined) {
+            // Already-published content: notify only newly added mentions.
+            const previousMentionedUserIds = new Set(
+              collectMentionedUserIds(post.contentDocument),
+            );
+
+            mentionUserIdsToNotify = nextMentionedUserIds.filter(
+              (mentionedUserId) =>
+                !previousMentionedUserIds.has(mentionedUserId),
+            );
+          }
+        }
+
+        await this.recordMentionCreatedEvents(
+          tx,
+          postId,
+          userId,
+          mentionUserIdsToNotify,
+        );
 
         /*
          * Synchronize media records if attachments were added or removed.
