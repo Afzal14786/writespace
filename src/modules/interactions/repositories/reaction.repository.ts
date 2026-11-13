@@ -1,6 +1,6 @@
 import { and, eq, sql } from "drizzle-orm";
 
-import { db } from "../../../db";
+import { db, type DatabaseTransaction } from "../../../db";
 
 import {
   articles,
@@ -14,8 +14,23 @@ import {
 import type { ReactionType } from "../contracts/reaction.types";
 
 export class ReactionRepository {
-  // Content item reactions
+  /**
+   * Use a caller-owned transaction when supplied.
+   *
+   * The optional transaction keeps existing repository callers backward
+   * compatible, while allowing ReactionService to write the business change
+   * and its notification outbox event atomically in one transaction.
+   */
+  private withTransaction<T>(
+    transaction: DatabaseTransaction | undefined,
+    operation: (tx: DatabaseTransaction) => Promise<T>,
+  ): Promise<T> {
+    return transaction ? operation(transaction) : db.transaction(operation);
+  }
 
+  // ---------------------------------------------------------------------------
+  // Content item reactions
+  // ---------------------------------------------------------------------------
 
   /**
    * Find a user's current reaction on a content item.
@@ -51,13 +66,17 @@ export class ReactionRepository {
    * - New reaction: increment reactionCount.
    * - Changed reaction type: counter unchanged.
    * - Repeated identical reaction: no change.
+   *
+   * When a transaction is supplied, the caller is responsible for committing
+   * both this change and any associated outbox event.
    */
   public async setContentItemReaction(
     contentItemId: string,
     userId: string,
     reactionType: ReactionType,
+    transaction?: DatabaseTransaction,
   ) {
-    return db.transaction(async (tx) => {
+    return this.withTransaction(transaction, async (tx) => {
       const [contentItem] = await tx
         .select({
           id: contentItems.id,
@@ -231,8 +250,12 @@ export class ReactionRepository {
    * Removing an existing Like is allowed even when the content is no
    * longer published. Creating or changing a reaction requires publication.
    */
-  public async toggleContentItemLike(contentItemId: string, userId: string) {
-    return db.transaction(async (tx) => {
+  public async toggleContentItemLike(
+    contentItemId: string,
+    userId: string,
+    transaction?: DatabaseTransaction,
+  ) {
+    return this.withTransaction(transaction, async (tx) => {
       const [item] = await tx
         .select({
           id: contentItems.id,
@@ -389,8 +412,9 @@ export class ReactionRepository {
   public async deleteContentItemReaction(
     contentItemId: string,
     userId: string,
+    transaction?: DatabaseTransaction,
   ) {
-    return db.transaction(async (tx) => {
+    return this.withTransaction(transaction, async (tx) => {
       const [contentItem] = await tx
         .select({
           id: contentItems.id,
@@ -443,8 +467,9 @@ export class ReactionRepository {
       .groupBy(contentReactions.reactionType);
   }
 
+  // ---------------------------------------------------------------------------
   // Comment reactions
-
+  // ---------------------------------------------------------------------------
 
   /**
    * Find a user's current reaction on a comment.
@@ -477,8 +502,66 @@ export class ReactionRepository {
     commentId: string,
     userId: string,
     reactionType: ReactionType,
+    transaction?: DatabaseTransaction,
   ) {
-    return db.transaction(async (tx) => {
+    return this.withTransaction(transaction, async (tx) => {
+      /*
+       * Resolve the parent content item before changing the reaction.
+       *
+       * The initial lookup is intentionally unlocked. We then lock the
+       * content item first, matching the lock order used by comment
+       * deletion, before locking and revalidating the comment itself.
+       */
+      const [commentReference] = await tx
+        .select({
+          contentItemId: comments.contentItemId,
+        })
+        .from(comments)
+        .where(eq(comments.id, commentId))
+        .limit(1);
+
+      if (!commentReference) {
+        return null;
+      }
+
+      // Serialize reactions against publication changes and comment deletion.
+      const [contentItem] = await tx
+        .select({
+          id: contentItems.id,
+          status: contentItems.status,
+        })
+        .from(contentItems)
+        .where(eq(contentItems.id, commentReference.contentItemId))
+        .for("update")
+        .limit(1);
+
+      // New and changed reactions are allowed only on published content.
+      if (!contentItem || contentItem.status !== "published") {
+        return null;
+      }
+
+      /*
+       * Re-read and lock the comment after acquiring the parent lock.
+       * It may have been deleted while this transaction was waiting.
+       */
+      const [comment] = await tx
+        .select({
+          id: comments.id,
+        })
+        .from(comments)
+        .where(
+          and(
+            eq(comments.id, commentId),
+            eq(comments.contentItemId, contentItem.id),
+          ),
+        )
+        .for("update")
+        .limit(1);
+
+      if (!comment) {
+        return null;
+      }
+
       const existing = await tx
         .select({
           reactionType: commentReactions.reactionType,
@@ -606,8 +689,12 @@ export class ReactionRepository {
    *
    * The counter is decremented only when an actual reaction is deleted.
    */
-  public async deleteCommentReaction(commentId: string, userId: string) {
-    return db.transaction(async (tx) => {
+  public async deleteCommentReaction(
+    commentId: string,
+    userId: string,
+    transaction?: DatabaseTransaction,
+  ) {
+    return this.withTransaction(transaction, async (tx) => {
       const [deleted] = await tx
         .delete(commentReactions)
         .where(
@@ -647,7 +734,9 @@ export class ReactionRepository {
       .groupBy(commentReactions.reactionType);
   }
 
+  // ---------------------------------------------------------------------------
   // Backward-compatible Post method aliases
+  // ---------------------------------------------------------------------------
 
   /**
    * @deprecated Use findContentItemReaction().
@@ -673,15 +762,25 @@ export class ReactionRepository {
     postId: string,
     userId: string,
     reactionType: ReactionType,
+    transaction?: DatabaseTransaction,
   ) {
-    return this.setContentItemReaction(postId, userId, reactionType);
+    return this.setContentItemReaction(
+      postId,
+      userId,
+      reactionType,
+      transaction,
+    );
   }
 
   /**
    * @deprecated Use deleteContentItemReaction().
    */
-  public async deletePostReaction(postId: string, userId: string) {
-    return this.deleteContentItemReaction(postId, userId);
+  public async deletePostReaction(
+    postId: string,
+    userId: string,
+    transaction?: DatabaseTransaction,
+  ) {
+    return this.deleteContentItemReaction(postId, userId, transaction);
   }
 
   /**

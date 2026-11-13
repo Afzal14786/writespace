@@ -1,6 +1,8 @@
-import type { Server } from "node:http";
+import { createServer, type Server } from "node:http";
+
 import env from "./config/env";
 import { client as redisClient, connectRedis } from "./config/redis";
+import { initializeNotificationSocketServer } from "./modules/notification/realtime/notification-socket.server";
 import { pool } from "./db";
 import logger from "./config/logger";
 
@@ -14,13 +16,13 @@ async function startServer(): Promise<void> {
   const queues: CloseableResource[] = [];
 
   let server: Server | undefined;
+  let notificationSocketServer:
+    | ReturnType<typeof initializeNotificationSocketServer>
+    | undefined;
   let isShuttingDown = false;
 
   // Close application resources gracefully.
-  async function gracefulShutdown(
-    reason: string,
-    exitCode = 0,
-  ): Promise<void> {
+  async function gracefulShutdown(reason: string, exitCode = 0): Promise<void> {
     if (isShuttingDown) {
       logger.warn(`Shutdown already in progress, ignoring "${reason}"`);
       return;
@@ -52,8 +54,24 @@ async function startServer(): Promise<void> {
       }
     }
 
-    // Stop accepting new HTTP requests.
-    if (server?.listening) {
+    /*
+     * Socket.IO owns the attached HTTP server's shutdown.
+     *
+     * Closing Socket.IO first disconnects connected clients and closes
+     * the underlying HTTP server. Do not call server.close() separately.
+     */
+    if (notificationSocketServer) {
+      const activeSocketServer = notificationSocketServer;
+
+      await closeResource(
+        "Notification Socket.IO and HTTP server",
+        () =>
+          new Promise<void>((resolve) => {
+            activeSocketServer.close(() => resolve());
+          }),
+      );
+    } else if (server?.listening) {
+      // Fallback for startup failures before Socket.IO initialization.
       await new Promise<void>((resolve) => {
         server!.close((error) => {
           if (error) {
@@ -68,22 +86,25 @@ async function startServer(): Promise<void> {
       });
     }
 
-    // Close workers before their associated queues.
+    /*
+     * Stop the dispatcher before the consumers.
+     *
+     * This prevents new queue jobs from being published while the
+     * notification workers are shutting down.
+     */
     for (const worker of workers) {
       await closeResource(worker.name, worker.close);
     }
 
-    // Close queue connections.
+    // Close queues after their workers have drained.
     for (const queue of queues) {
       await closeResource(queue.name, queue.close);
     }
 
-    // Close Redis.
     if (redisClient.isOpen) {
       await closeResource("Redis connection", () => redisClient.quit());
     }
 
-    // Close PostgreSQL.
     await closeResource("PostgreSQL pool", () => pool.end());
 
     clearTimeout(forceExit);
@@ -104,22 +125,16 @@ async function startServer(): Promise<void> {
     await connectRedis();
     logger.info("Redis connected successfully");
 
-    // Initialize queue instances after Redis is connected.
+    // Initialize existing queue instances after Redis is connected.
     const { emailQueue } = await import("./shared/queues/email.queue");
+
     queues.push({
       name: "Email queue",
       close: () => emailQueue.close(),
     });
 
-    const { notificationQueue } = await import(
-      "./shared/queues/notification.queue"
-    );
-    queues.push({
-      name: "Notification queue",
-      close: () => notificationQueue.close(),
-    });
-
     const { mediaQueue } = await import("./shared/queues/media.queue");
+
     queues.push({
       name: "Media queue",
       close: () => mediaQueue.close(),
@@ -128,29 +143,119 @@ async function startServer(): Promise<void> {
     // Load the Express application after infrastructure initialization.
     const { default: app } = await import("./app");
 
-    // Initialize background workers.
+    // Create one HTTP server shared by Express and Socket.IO.
+    server = createServer(app);
+
+    // Attach the authenticated notification socket server.
+    notificationSocketServer = initializeNotificationSocketServer(server);
+
+    // Initialize existing background workers.
     const { emailWorker } = await import("./shared/queues/email.worker");
+
     workers.push({
       name: "Email worker",
       close: () => emailWorker.close(),
     });
 
-    const { notificationWorker } = await import(
-      "./shared/queues/notification.worker"
-    );
-    workers.push({
-      name: "Notification worker",
-      close: () => notificationWorker.close(),
-    });
-
     const { mediaWorker } = await import("./shared/queues/media.worker");
+
     workers.push({
       name: "Media worker",
       close: () => mediaWorker.close(),
     });
 
+    /**
+     * Initialize durable notification queues and workers only when
+     * explicitly enabled.
+     *
+     * Interaction services use the same flag before recording notification
+     * domain events. Existing pending outbox rows remain durable and can
+     * be processed when the pipeline is enabled again.
+     */
+    if (env.OUTBOX_PROCESSING_ENABLED) {
+      const { notificationEventsQueue } =
+        await import("./shared/queues/notification-events.queue");
+
+      queues.push({
+        name: "Notification events queue",
+        close: () => notificationEventsQueue.close(),
+      });
+
+      const { notificationDeliveryEventsQueue } =
+        await import("./shared/queues/notification-delivery-events.queue");
+
+      queues.push({
+        name: "Notification delivery events queue",
+        close: () => notificationDeliveryEventsQueue.close(),
+      });
+
+      // Start the domain event consumer.
+      const { notificationEventsWorker } =
+        await import("./modules/notification/workers/notification-events.worker");
+
+      workers.push({
+        name: "Notification events worker",
+        close: () => notificationEventsWorker.close(),
+      });
+
+      await notificationEventsWorker.waitUntilReady();
+
+      // Start the channel delivery consumer.
+      const { notificationDeliveryEventsWorker } =
+        await import("./modules/notification/workers/notification-delivery-events.worker");
+
+      workers.push({
+        name: "Notification delivery events worker",
+        close: () => notificationDeliveryEventsWorker.close(),
+      });
+
+      await notificationDeliveryEventsWorker.waitUntilReady();
+
+      /*
+       * Start delivery reconciliation only after the delivery queue
+       * and its consumer are ready.
+       */
+      const { notificationReconciliationWorker } =
+        await import("./modules/notification/workers/notification-reconciliation.worker");
+
+      /*
+       * Stop reconciliation before its queue consumers during shutdown.
+       *
+       * The outbox dispatcher is added with unshift() below, so it
+       * will stop first, followed by reconciliation and then consumers.
+       */
+      workers.unshift({
+        name: "Notification reconciliation worker",
+        close: () => notificationReconciliationWorker.close(),
+      });
+
+      notificationReconciliationWorker.start();
+
+      /*
+       * Start the dispatcher only after both consumers are ready.
+       *
+       * It is unshifted so it is stopped first during graceful shutdown.
+       */
+      const { outboxDispatcherWorker } =
+        await import("./modules/notification/workers/outbox-dispatcher.worker");
+
+      workers.unshift({
+        name: "Outbox dispatcher",
+        close: () => outboxDispatcherWorker.close(),
+      });
+
+      outboxDispatcherWorker.start();
+
+      logger.info("Durable notification event and delivery pipelines enabled");
+    } else {
+      logger.warn(
+        "Durable notification event processing is disabled. " +
+          "New events will remain pending in PostgreSQL until the dispatcher is enabled.",
+      );
+    }
+
     // Start the HTTP server.
-    server = app.listen(env.PORT, "0.0.0.0", () => {
+    server.listen(env.PORT, "0.0.0.0", () => {
       logger.info(`Server is running on port ${env.PORT}`);
     });
 
@@ -159,7 +264,6 @@ async function startServer(): Promise<void> {
       void gracefulShutdown("HTTP server error", 1);
     });
 
-    // Handle process termination signals.
     process.on("SIGTERM", () => {
       void gracefulShutdown("SIGTERM");
     });
@@ -168,7 +272,6 @@ async function startServer(): Promise<void> {
       void gracefulShutdown("SIGINT");
     });
 
-    // Handle unexpected application errors.
     process.on("uncaughtException", (error) => {
       logger.error("Uncaught exception", { error });
       void gracefulShutdown("Uncaught exception", 1);

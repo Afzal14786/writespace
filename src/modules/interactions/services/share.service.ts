@@ -1,6 +1,9 @@
 import { AppError } from "@shared/utils/app.error";
 import { HTTP_STATUS } from "@shared/constants/http-codes";
 import logger from "@config/logger";
+import env from "@config/env";
+import { db } from "../../../db";
+import { eventPublisherService } from "@modules/notification/services/event-publisher.service";
 
 import type {
   ContentItemSharePageResult,
@@ -131,19 +134,57 @@ export class ShareService {
 
     await this.ensureContentItemExists(contentItemId);
 
-    const share = await shareRepository.createContentItemShare(
-      actorId,
-      contentItemId,
-      normalizedPlatform,
-    );
+    /*
+     * The share record, share counter and outbox event must commit together
+     * when the durable notification pipeline is enabled.
+     */
+    const share = env.OUTBOX_PROCESSING_ENABLED
+      ? await db.transaction(async (transaction) => {
+          const created = await shareRepository.createContentItemShare(
+            actorId,
+            contentItemId,
+            normalizedPlatform,
+            transaction,
+          );
+
+          if (!created) {
+            return null;
+          }
+
+          await eventPublisherService.recordInTransaction(transaction, {
+            eventName: "share.created",
+            eventVersion: 1,
+            producer: "interactions",
+            aggregate: {
+              type: "content_item",
+              id: contentItemId,
+            },
+            actorId,
+            payload: {
+              contentItemId,
+              platform: normalizedPlatform,
+            },
+          });
+
+          return created;
+        })
+      : await shareRepository.createContentItemShare(
+          actorId,
+          contentItemId,
+          normalizedPlatform,
+        );
 
     if (!share) {
       throw new AppError(
         HTTP_STATUS.INTERNAL_SERVER_ERROR,
-        "Failed to create share",
+        "Content not found",
       );
     }
 
+    /*
+     * Keep the old interaction history as a separate best-effort record.
+     * It is deliberately published after the database transaction commits.
+     */
     try {
       const event = interactionEventMapper.mapShareEvent({
         actorId,
@@ -152,8 +193,8 @@ export class ShareService {
       });
 
       await interactionEventPublisher.publish(event);
-    } catch (error) {
-      logger.error("Failed to publish share.created event", {
+    } catch (error: unknown) {
+      logger.error("Failed to publish share.created interaction history", {
         actorId,
         contentItemId,
         platform: normalizedPlatform,

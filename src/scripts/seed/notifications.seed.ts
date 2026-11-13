@@ -1,15 +1,16 @@
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 
 import type { SeedTransaction } from "./seed-types";
 import type { NewNotification } from "../../db/schema/notifications";
 import type { NewNotificationDelivery } from "../../db/schema/notification-deliveries";
+
+import { NOTIFICATION_POLICY_VERSION } from "../../modules/notification/domain/notification-policy.registry";
 
 import {
   comments,
   contentItems,
   contentMentions,
   contentReactions,
-  contentShares,
   follows,
   notificationDeliveries,
   notifications,
@@ -26,7 +27,7 @@ export async function seedNotifications(tx: SeedTransaction) {
     })
     .from(users);
 
-  // Match the display-name fallback used by notification.worker.ts.
+  // Match the display-name fallback used by the notification processor.
   const actorNames = new Map(
     userRows.map((user) => [user.id, user.fullname || user.username]),
   );
@@ -46,14 +47,17 @@ export async function seedNotifications(tx: SeedTransaction) {
   // Welcome notifications have no actor because they are system-generated.
   for (const user of userRows) {
     notificationRows.push({
-      recipientId: user.id,
-      actorId: null,
-      type: "WELCOME",
-      entityType: "SYSTEM",
-      relatedId: null,
-      message: `Welcome to Writespace, ${user.username}! We're glad you're here.`,
-      metadata: {},
-      isRead: false,
+      recipientUserId: user.id,
+      actorUserId: null,
+      notificationType: "WELCOME",
+      category: "platform",
+      title: "Welcome to Writespace",
+      body: `Welcome to Writespace, ${user.username}! We're glad you're here.`,
+      presentationData: {},
+      resourceType: "user",
+      resourceId: user.id,
+      actionType: "open_resource",
+      status: "active",
       createdAt: user.createdAt,
     });
   }
@@ -71,18 +75,21 @@ export async function seedNotifications(tx: SeedTransaction) {
     if (follow.recipientId === follow.actorId) continue;
 
     notificationRows.push({
-      recipientId: follow.recipientId,
-      actorId: follow.actorId,
-      type: "FOLLOW",
-      entityType: "USER",
-      relatedId: follow.actorId,
-      message: formatActorMessage(follow.actorId, "started following you."),
-      metadata: {},
+      recipientUserId: follow.recipientId,
+      actorUserId: follow.actorId,
+      notificationType: "FOLLOW",
+      category: "social",
+      title: "New follower",
+      body: formatActorMessage(follow.actorId, "started following you."),
+      presentationData: {},
+      resourceType: "user",
+      resourceId: follow.actorId,
+      actionType: "open_resource",
       createdAt: follow.createdAt,
     });
   }
 
-  // Mention notifications are based on the unique mention records.
+  // Mention notifications are based on the unique mention lookup records.
   const mentionRows = await tx
     .select({
       recipientId: contentMentions.mentionedUserId,
@@ -92,10 +99,8 @@ export async function seedNotifications(tx: SeedTransaction) {
       createdAt: contentMentions.createdAt,
     })
     .from(contentMentions)
-    .innerJoin(
-      contentItems,
-      eq(contentMentions.contentItemId, contentItems.id),
-    );
+    .innerJoin(contentItems, eq(contentMentions.contentItemId, contentItems.id))
+    .where(eq(contentItems.status, "published"));
 
   for (const mention of mentionRows) {
     if (mention.recipientId === mention.actorId) continue;
@@ -104,18 +109,21 @@ export async function seedNotifications(tx: SeedTransaction) {
       mention.contentType === "article" ? "an article" : "a post";
 
     notificationRows.push({
-      recipientId: mention.recipientId,
-      actorId: mention.actorId,
-      type: "MENTION",
-      entityType: "CONTENT_ITEM",
-      relatedId: mention.contentItemId,
-      message: formatActorMessage(
+      recipientUserId: mention.recipientId,
+      actorUserId: mention.actorId,
+      notificationType: "MENTION",
+      category: "social",
+      title: "You were mentioned",
+      body: formatActorMessage(
         mention.actorId,
         `mentioned you in ${contentLabel}.`,
       ),
-      metadata: {
+      presentationData: {
         contentType: mention.contentType,
       },
+      resourceType: "content_item",
+      resourceId: mention.contentItemId,
+      actionType: "open_resource",
       createdAt: mention.createdAt,
     });
   }
@@ -133,38 +141,48 @@ export async function seedNotifications(tx: SeedTransaction) {
     .innerJoin(
       contentItems,
       eq(contentReactions.contentItemId, contentItems.id),
-    );
+    )
+    .where(eq(contentItems.status, "published"));
 
   for (const reaction of reactionRows) {
     if (reaction.recipientId === reaction.actorId) continue;
 
     notificationRows.push({
-      recipientId: reaction.recipientId,
-      actorId: reaction.actorId,
-      type: "REACTION",
-      entityType: "CONTENT_ITEM",
-      relatedId: reaction.contentItemId,
-      message: formatActorMessage(reaction.actorId, "reacted to your content."),
-      metadata: {
+      recipientUserId: reaction.recipientId,
+      actorUserId: reaction.actorId,
+      notificationType: "REACTION",
+      category: "social",
+      title: "New reaction",
+      body: formatActorMessage(reaction.actorId, "reacted to your content."),
+      presentationData: {
         reactionType: reaction.reactionType,
       },
+      resourceType: "content_item",
+      resourceId: reaction.contentItemId,
+      actionType: "open_resource",
       createdAt: reaction.createdAt,
     });
   }
 
-  // Comments and replies both contribute to the content author's activity.
+  // Phase 2: only top-level comments generate comment notifications.
+  // Replies will have their own notification behavior in Phase 3.
   const commentRows = await tx
     .select({
       recipientId: contentItems.authorId,
       actorId: comments.authorId,
       contentItemId: comments.contentItemId,
       commentId: comments.id,
-      parentCommentId: comments.parentCommentId,
       content: comments.content,
       createdAt: comments.createdAt,
     })
     .from(comments)
-    .innerJoin(contentItems, eq(comments.contentItemId, contentItems.id));
+    .innerJoin(contentItems, eq(comments.contentItemId, contentItems.id))
+    .where(
+      and(
+        isNull(comments.parentCommentId),
+        eq(contentItems.status, "published"),
+      ),
+    );
 
   for (const comment of commentRows) {
     if (comment.recipientId === comment.actorId) continue;
@@ -172,48 +190,25 @@ export async function seedNotifications(tx: SeedTransaction) {
     const preview = comment.content.trim().slice(0, 100);
 
     notificationRows.push({
-      recipientId: comment.recipientId,
-      actorId: comment.actorId,
-      type: "COMMENT",
-      entityType: "CONTENT_ITEM",
-      relatedId: comment.contentItemId,
-      message: formatActorMessage(comment.actorId, `commented: "${preview}"`),
-      metadata: {
-        commentId: comment.commentId,
-        parentCommentId: comment.parentCommentId,
+      recipientUserId: comment.recipientId,
+      actorUserId: comment.actorId,
+      notificationType: "COMMENT",
+      category: "social",
+      title: "New comment",
+      body: formatActorMessage(comment.actorId, `commented: "${preview}"`),
+      presentationData: {
+        contentItemId: comment.contentItemId,
+        commentPreview: preview,
       },
+      resourceType: "comment",
+      resourceId: comment.commentId,
+      actionType: "open_resource",
       createdAt: comment.createdAt,
     });
   }
 
-  // Shares notify the author of the shared content.
-  const shareRows = await tx
-    .select({
-      recipientId: contentItems.authorId,
-      actorId: contentShares.userId,
-      contentItemId: contentShares.contentItemId,
-      platform: contentShares.platform,
-      createdAt: contentShares.createdAt,
-    })
-    .from(contentShares)
-    .innerJoin(contentItems, eq(contentShares.contentItemId, contentItems.id));
-
-  for (const share of shareRows) {
-    if (share.recipientId === share.actorId) continue;
-
-    notificationRows.push({
-      recipientId: share.recipientId,
-      actorId: share.actorId,
-      type: "SHARE",
-      entityType: "CONTENT_ITEM",
-      relatedId: share.contentItemId,
-      message: formatActorMessage(share.actorId, "shared your content."),
-      metadata: {
-        platform: share.platform,
-      },
-      createdAt: share.createdAt,
-    });
-  }
+  // External shares are intentionally excluded from inbox notifications.
+  // Their records and shareCount remain managed by the interactions module.
 
   if (notificationRows.length === 0) {
     return {
@@ -230,24 +225,34 @@ export async function seedNotifications(tx: SeedTransaction) {
         ...notification,
 
         // Keep a predictable mixture of read and unread demo notifications.
-        isRead: index % 3 === 0,
+        readAt: index % 3 === 0 ? notification.createdAt : null,
       })),
     )
     .returning({
       id: notifications.id,
+      recipientUserId: notifications.recipientUserId,
       createdAt: notifications.createdAt,
     });
 
-  // Seed in-app delivery records directly.
-  // These records are not submitted to the email queue.
+  /*
+   * Seed historical realtime delivery records.
+   * These are marked as delivered demo records and are not submitted
+   * to the notification workers or external email queue.
+   */
   const deliveryRows: NewNotificationDelivery[] = insertedNotifications.map(
     (notification) => ({
       notificationId: notification.id,
-      channel: "IN_APP",
-      status: "SENT",
+      recipientUserId: notification.recipientUserId,
+      channel: "realtime",
+      status: "delivered",
+      idempotencyKey: `seed:realtime:${notification.id}`,
       attemptCount: 1,
-      sentAt: notification.createdAt,
-      lastError: null,
+      policyVersion: NOTIFICATION_POLICY_VERSION,
+      eligibilityDecision: "eligible",
+      reasonCode: "seeded_notification",
+      preferenceEvaluatedAt: notification.createdAt,
+      acceptedAt: notification.createdAt,
+      confirmedDeliveredAt: notification.createdAt,
       createdAt: notification.createdAt,
       updatedAt: notification.createdAt,
     }),

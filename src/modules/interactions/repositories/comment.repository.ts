@@ -3,7 +3,7 @@ import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { AppError } from "@shared/utils/app.error";
 import { HTTP_STATUS } from "@shared/constants/http-codes";
 
-import { db } from "../../../db";
+import { db, type DatabaseTransaction } from "../../../db";
 import {
   articles,
   comments,
@@ -14,6 +14,11 @@ import {
 } from "../../../db/schema";
 
 import type { CommentCursor } from "../interface/comment.interface";
+
+type CreatedCommentRecord = Pick<
+  typeof comments.$inferSelect,
+  "id" | "contentItemId" | "authorId" | "parentCommentId" | "createdAt"
+>;
 
 export class CommentRepository {
   /**
@@ -83,12 +88,14 @@ export class CommentRepository {
     authorId: string,
     content: string,
     parentCommentId?: string | null,
-  ) {
-    return db.transaction(async (tx) => {
+    transaction?: DatabaseTransaction,
+  ): Promise<CreatedCommentRecord> {
+    const create = async (tx: DatabaseTransaction) => {
       const [item] = await tx
         .select({
           id: contentItems.id,
           contentType: contentItems.contentType,
+          status: contentItems.status,
         })
         .from(contentItems)
         .where(eq(contentItems.id, contentItemId))
@@ -96,6 +103,12 @@ export class CommentRepository {
         .limit(1);
 
       if (!item) {
+        throw new AppError(HTTP_STATUS.NOT_FOUND, "Content not found");
+      }
+
+      // Social comments are allowed only after the content is published.
+      // Return the same 404 as missing content to avoid exposing drafts.
+      if (item.status !== "published") {
         throw new AppError(HTTP_STATUS.NOT_FOUND, "Content not found");
       }
 
@@ -157,7 +170,6 @@ export class CommentRepository {
         .returning({
           id: comments.id,
           contentItemId: comments.contentItemId,
-          postId: comments.contentItemId,
           authorId: comments.authorId,
           parentCommentId: comments.parentCommentId,
           createdAt: comments.createdAt,
@@ -186,8 +198,12 @@ export class CommentRepository {
           .where(eq(comments.id, parentCommentId));
       }
 
+      // Return the inserted comment to the caller.
       return created;
-    });
+    };
+
+    // Reuse the caller's transaction when supplied; otherwise create one.
+    return transaction ? create(transaction) : db.transaction(create);
   }
 
   async getTopLevelComments(
@@ -199,6 +215,7 @@ export class CommentRepository {
     const conditions = [
       eq(comments.contentItemId, contentItemId),
       isNull(comments.parentCommentId),
+      eq(contentItems.status, "published"),
     ];
 
     if (cursor) {
@@ -252,6 +269,7 @@ export class CommentRepository {
           : {}),
       })
       .from(comments)
+      .innerJoin(contentItems, eq(comments.contentItemId, contentItems.id))
       .innerJoin(users, eq(comments.authorId, users.id))
       .where(and(...conditions))
       .orderBy(desc(comments.createdAt), desc(comments.id))
@@ -264,7 +282,10 @@ export class CommentRepository {
     cursor?: CommentCursor,
     requesterId?: string,
   ) {
-    const conditions = [eq(comments.parentCommentId, parentCommentId)];
+    const conditions = [
+      eq(comments.parentCommentId, parentCommentId),
+      eq(contentItems.status, "published"),
+    ];
 
     if (cursor) {
       conditions.push(sql`(
@@ -317,19 +338,38 @@ export class CommentRepository {
           : {}),
       })
       .from(comments)
+      .innerJoin(contentItems, eq(comments.contentItemId, contentItems.id))
       .innerJoin(users, eq(comments.authorId, users.id))
       .where(and(...conditions))
       .orderBy(desc(comments.createdAt), desc(comments.id))
       .limit(limit);
   }
 
-  async getCommentById(commentId: string, requesterId?: string) {
+  /**
+   * Shared comment lookup.
+   *
+   * Public reads require published content. Management operations can
+   * inspect an existing comment even if its content is unpublished, so
+   * its author can still manage their comment.
+   */
+  private async findCommentById(
+    commentId: string,
+    requesterId: string | undefined,
+    requirePublished: boolean,
+  ) {
+    const conditions = [eq(comments.id, commentId)];
+
+    if (requirePublished) {
+      conditions.push(eq(contentItems.status, "published"));
+    }
+
     const result = await db
       .select({
         id: comments.id,
         content: comments.content,
         contentItemId: comments.contentItemId,
 
+        // Legacy API response alias. Prefer contentItemId in new clients.
         postId: comments.contentItemId,
 
         authorId: comments.authorId,
@@ -360,11 +400,28 @@ export class CommentRepository {
           : {}),
       })
       .from(comments)
+      .innerJoin(contentItems, eq(comments.contentItemId, contentItems.id))
       .innerJoin(users, eq(comments.authorId, users.id))
-      .where(eq(comments.id, commentId))
+      .where(and(...conditions))
       .limit(1);
 
     return result[0] ?? null;
+  }
+
+  /** Retrieve a comment only when its parent content is published. */
+  public async getCommentById(commentId: string, requesterId?: string) {
+    return this.findCommentById(commentId, requesterId, true);
+  }
+
+  /**
+   * Internal lookup for ownership checks and comment management.
+   * This method is not used by the public comment-reading endpoints.
+   */
+  public async getCommentByIdForManagement(
+    commentId: string,
+    requesterId?: string,
+  ) {
+    return this.findCommentById(commentId, requesterId, false);
   }
 
   /**
@@ -423,7 +480,7 @@ export class CommentRepository {
         .where(eq(comments.id, commentId))
         .returning({
           id: comments.id,
-          postId: comments.contentItemId,
+          contentItemId: comments.contentItemId,
           parentCommentId: comments.parentCommentId,
         });
 

@@ -38,8 +38,10 @@ export const parseFormDataJson = (
     try {
       body[field] = JSON.parse(fieldValue) as unknown;
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message: String(error);
-      logger.warn(`[ParseFormData] Failed to parse field '${field}': ${message}`);
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn(
+        `[ParseFormData] Failed to parse field '${field}': ${message}`,
+      );
     }
   }
 

@@ -1,6 +1,8 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
+import env from "@config/env";
+import { eventPublisherService } from "@modules/notification/services/event-publisher.service";
 
-import { db } from "../../../db";
+import { db, type DatabaseTransaction } from "../../../db";
 
 import {
   articles,
@@ -89,6 +91,43 @@ class ArticleCommandService {
         HTTP_STATUS.FORBIDDEN,
         "You cannot attach a cover image that does not belong to your account",
       );
+    }
+  }
+
+  /**
+   * Record one mention event for each eligible mentioned user.
+   *
+   * Events are written through the caller's transaction so they cannot
+   * survive if the associated Article or mention records roll back.
+   */
+  private async recordMentionCreatedEvents(
+    transaction: DatabaseTransaction,
+    contentItemId: string,
+    authorId: string,
+    mentionedUserIds: string[],
+  ): Promise<void> {
+    if (!env.OUTBOX_PROCESSING_ENABLED || mentionedUserIds.length === 0) {
+      return;
+    }
+
+    for (const mentionedUserId of mentionedUserIds) {
+      await eventPublisherService.recordInTransaction(transaction, {
+        eventName: "mention.created",
+        eventVersion: 1,
+        producer: "articles.commands",
+
+        aggregate: {
+          type: "content_item",
+          id: contentItemId,
+        },
+
+        actorId: authorId,
+
+        payload: {
+          contentItemId,
+          mentionedUserId,
+        },
+      });
     }
   }
 
@@ -405,6 +444,17 @@ class ArticleCommandService {
               contentItemId: articleId,
               mentionedUserId,
             })),
+          );
+        }
+
+        // Only initially published Articles notify their mentioned users.
+        // Draft and scheduled Articles notify mentions when they are published.
+        if (lifecycle.status === ArticleStatus.PUBLISHED) {
+          await this.recordMentionCreatedEvents(
+            tx,
+            articleId,
+            authorId,
+            mentionedUserIds,
           );
         }
 
@@ -822,6 +872,41 @@ class ArticleCommandService {
             );
           }
         }
+
+        /*
+         * Determine which mentions have become eligible for notification.
+         *
+         * Publishing a previously unpublished Article notifies every
+         * current mention. Editing an already-published Article only
+         * notifies users newly introduced in the updated document.
+         */
+        let mentionUserIdsToNotify: string[] = [];
+
+        if (nextLifecycle.status === ArticleStatus.PUBLISHED) {
+          if (currentStatus !== ArticleStatus.PUBLISHED) {
+            // First publication: all current mentions become eligible.
+            mentionUserIdsToNotify =
+              nextMentionedUserIds ??
+              collectArticleMentionedUserIds(article.contentDocument);
+          } else if (nextMentionedUserIds !== undefined) {
+            // Already-published content: notify only newly added mentions.
+            const previousMentionedUserIds = new Set(
+              collectArticleMentionedUserIds(article.contentDocument),
+            );
+
+            mentionUserIdsToNotify = nextMentionedUserIds.filter(
+              (mentionedUserId) =>
+                !previousMentionedUserIds.has(mentionedUserId),
+            );
+          }
+        }
+
+        await this.recordMentionCreatedEvents(
+          tx,
+          articleId,
+          userId,
+          mentionUserIdsToNotify,
+        );
 
         /*
          * 13. Collect old cover-image assets.
