@@ -25,9 +25,7 @@ export const bullmqRedisConnection = {
 
   password:
     env.REDIS_PASSWORD ||
-    (redisUrl.password
-      ? decodeURIComponent(redisUrl.password)
-      : undefined),
+    (redisUrl.password ? decodeURIComponent(redisUrl.password) : undefined),
 
   db: redisDatabase,
 
