@@ -21,3 +21,14 @@ pool.on("error", (error) => {
 export const db = drizzle(pool, {
   schema,
 });
+
+/**
+ * Transaction type inferred from this project's configured Drizzle database.
+ *
+ * Repositories can accept this type when they need to participate in a
+ * transaction started by a feature-level operation. Deriving it from `db`
+ * keeps the type aligned with the actual Node PostgreSQL driver and schema.
+ */
+export type DatabaseTransaction = Parameters<
+  Parameters<typeof db.transaction>[0]
+>[0];
