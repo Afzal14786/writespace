@@ -1,6 +1,6 @@
 import { and, desc, eq, sql } from "drizzle-orm";
 
-import { db } from "../../../db";
+import { db, type DatabaseTransaction } from "../../../db";
 import { contentItems, contentShares, posts } from "../../../db/schema";
 
 import type { ShareCursor } from "../contracts/share.types";
@@ -51,51 +51,113 @@ export class ShareRepository {
    * Multiple share records for the same user and content item are
    * intentional. Each recorded share action is a separate interaction.
    */
-  async createContentItemShare(
+  private async createContentItemShareInTransaction(
+    transaction: DatabaseTransaction,
     userId: string,
     contentItemId: string,
     platform: string,
   ) {
-    return db.transaction(async (tx) => {
-      const [createdShare] = await tx
-        .insert(contentShares)
-        .values({
-          userId,
-          contentItemId,
-          platform,
-        })
-        .returning({
-          id: contentShares.id,
-          userId: contentShares.userId,
-          contentItemId: contentShares.contentItemId,
+    /*
+     * Lock and validate the parent content item before recording a share.
+     *
+     * This protects the invariant at the database boundary instead of
+     * relying exclusively on the earlier application-level check.
+     */
+    const [contentItem] = await transaction
+      .select({
+        id: contentItems.id,
+        contentType: contentItems.contentType,
+        status: contentItems.status,
+      })
+      .from(contentItems)
+      .where(eq(contentItems.id, contentItemId))
+      .for("update")
+      .limit(1);
 
-          // Compatibility property for existing Post-oriented callers.
-          postId: contentShares.contentItemId,
+    if (
+      !contentItem ||
+      contentItem.status !== "published" ||
+      (contentItem.contentType !== "post" &&
+        contentItem.contentType !== "article")
+    ) {
+      return null;
+    }
 
-          platform: contentShares.platform,
-          createdAt: contentShares.createdAt,
-        });
+    const [createdShare] = await transaction
+      .insert(contentShares)
+      .values({
+        userId,
+        contentItemId,
+        platform,
+      })
+      .returning({
+        id: contentShares.id,
+        userId: contentShares.userId,
+        contentItemId: contentShares.contentItemId,
 
-      if (!createdShare) {
-        return null;
-      }
+        // Compatibility property for existing Post-oriented callers.
+        postId: contentShares.contentItemId,
 
-      await tx
-        .update(contentItems)
-        .set({
-          shareCount: sql`${contentItems.shareCount} + 1`,
-        })
-        .where(eq(contentItems.id, contentItemId));
+        platform: contentShares.platform,
+        createdAt: contentShares.createdAt,
+      });
 
-      return createdShare;
-    });
+    if (!createdShare) {
+      return null;
+    }
+
+    // Keep the share record and its counter update atomic.
+    await transaction
+      .update(contentItems)
+      .set({
+        shareCount: sql`${contentItems.shareCount} + 1`,
+      })
+      .where(eq(contentItems.id, contentItemId));
+
+    return createdShare;
+  }
+
+  /**
+   * Creates a share and increments the content item's share count.
+   *
+   * A supplied transaction allows the caller to include the outbox event
+   * in the same transaction.
+   */
+  public async createContentItemShare(
+    userId: string,
+    contentItemId: string,
+    platform: string,
+    transaction?: DatabaseTransaction,
+  ) {
+    if (transaction) {
+      return this.createContentItemShareInTransaction(
+        transaction,
+        userId,
+        contentItemId,
+        platform,
+      );
+    }
+
+    return db.transaction((tx) =>
+      this.createContentItemShareInTransaction(
+        tx,
+        userId,
+        contentItemId,
+        platform,
+      ),
+    );
   }
 
   /**
    * Legacy method retained for existing Post callers.
    */
-  async createShare(userId: string, postId: string, platform: string) {
-    return this.createContentItemShare(userId, postId, platform);
+  async createShare(
+    userId: string,
+    postId: string,
+    platform: string,
+    transaction?: DatabaseTransaction,
+  ) {
+    return this.createContentItemShare(userId, postId, platform, transaction);
   }
 
   /**
