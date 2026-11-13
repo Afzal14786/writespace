@@ -1,12 +1,66 @@
-import { Request, Response, NextFunction } from "express";
-import { notificationService } from "./notification.service";
+import type { Request, Response, NextFunction } from "express";
+import { z } from "zod";
+
 import { ApiResponse } from "@shared/utils/api-response";
-import { HTTP_STATUS } from "@shared/constants/http-codes";
 import { AppError } from "@shared/utils/app.error";
+import { HTTP_STATUS } from "@shared/constants/http-codes";
+
+import { notificationInboxService } from "./services/notification-inbox.service";
+
+const inboxQuerySchema = z
+  .object({
+    limit: z
+      .string()
+      .regex(/^[1-9]\d*$/)
+      .optional(),
+
+    cursor: z.string().min(1).max(512).optional(),
+
+    view: z.enum(["active", "archived", "dismissed"]).optional(),
+
+    unread: z.enum(["true", "false"]).optional(),
+
+    category: z.string().trim().min(1).max(100).optional(),
+
+    type: z.string().trim().min(1).max(150).optional(),
+  })
+  .strict();
+
+const notificationIdSchema = z.string().uuid();
+
+function getRecipientId(req: Request): string {
+  if (!req.user) {
+    throw new AppError(HTTP_STATUS.UNAUTHORIZED, "Authentication required.");
+  }
+
+  return req.user.id;
+}
+
+function getNotificationId(req: Request): string {
+  const parsed = notificationIdSchema.safeParse(req.params.notificationId);
+
+  if (!parsed.success) {
+    throw new AppError(
+      HTTP_STATUS.BAD_REQUEST,
+      "A valid notification ID is required.",
+    );
+  }
+
+  return parsed.data;
+}
+
+function setPrivateNoStore(res: Response): void {
+  res.setHeader("Cache-Control", "private, no-store");
+}
 
 export class NotificationController {
   /**
-   * Fetch the logged-in user's notifications with pagination
+   * GET /notifications
+   *
+   * Supports cursor pagination, inbox views, read-state filtering,
+   * category filtering and notification-type filtering.
+   *
+   * Recipient identity always comes from authentication.
    */
   public static async getNotifications(
     req: Request,
@@ -14,31 +68,45 @@ export class NotificationController {
     next: NextFunction,
   ): Promise<void> {
     try {
-      if (!req.user) {
-        throw new AppError(HTTP_STATUS.UNAUTHORIZED, "Authentication required");
+      const recipientId = getRecipientId(req);
+      const parsedQuery = inboxQuerySchema.safeParse(req.query);
+
+      if (!parsedQuery.success) {
+        throw new AppError(
+          HTTP_STATUS.BAD_REQUEST,
+          "Invalid notification query parameters.",
+        );
       }
 
-      // Safely parse pagination query parameters
-      const parsedLimit = req.query.limit
-        ? parseInt(req.query.limit as string, 10)
+      const limit = parsedQuery.data.limit
+        ? Number(parsedQuery.data.limit)
         : 20;
-      const parsedOffset = req.query.offset
-        ? parseInt(req.query.offset as string, 10)
-        : 0;
 
-      const limit = isNaN(parsedLimit) ? 20 : parsedLimit;
-      const offset = isNaN(parsedOffset) ? 0 : parsedOffset;
+      if (!Number.isInteger(limit) || limit < 1 || limit > 50) {
+        throw new AppError(
+          HTTP_STATUS.BAD_REQUEST,
+          "Notification limit must be between 1 and 50.",
+        );
+      }
 
-      const data = await notificationService.getUserNotifications(
-        req.user.id,
+      const data = await notificationInboxService.getInbox(recipientId, {
         limit,
-        offset,
-      );
+        cursor: parsedQuery.data.cursor,
+        view: parsedQuery.data.view,
+        unread:
+          parsedQuery.data.unread === undefined
+            ? undefined
+            : parsedQuery.data.unread === "true",
+        category: parsedQuery.data.category,
+        type: parsedQuery.data.type,
+      });
+
+      setPrivateNoStore(res);
 
       new ApiResponse(
         res,
         HTTP_STATUS.OK,
-        "Notifications retrieved successfully",
+        "Notifications retrieved successfully.",
         data,
       ).send();
     } catch (error) {
@@ -47,47 +115,25 @@ export class NotificationController {
   }
 
   /**
-   * Mark specific notifications as read
+   * GET /notifications/unread-count
    */
-  public static async markAsRead(
+  public static async getUnreadCount(
     req: Request,
     res: Response,
     next: NextFunction,
   ): Promise<void> {
     try {
-      if (!req.user) {
-        throw new AppError(HTTP_STATUS.UNAUTHORIZED, "Authentication required");
-      }
+      const recipientId = getRecipientId(req);
 
-      const body = req.body as Record<string, unknown>;
-      const notificationIds = body.notificationIds;
+      const data = await notificationInboxService.getUnreadCount(recipientId);
 
-      if (!Array.isArray(notificationIds)) {
-        throw new AppError(
-          HTTP_STATUS.BAD_REQUEST,
-          "notificationIds must be an array of numbers",
-        );
-      }
-
-      // STRICT TYPE SAFETY: Convert all incoming unknown IDs to numbers to satisfy Drizzle ORM's PgSerial type
-      const numericIds = notificationIds
-        .map((id: unknown) => Number(id))
-        .filter((id: number) => !isNaN(id));
-
-      if (numericIds.length === 0) {
-        throw new AppError(
-          HTTP_STATUS.BAD_REQUEST,
-          "Valid notificationIds are required",
-        );
-      }
-
-      await notificationService.markAsRead(numericIds, req.user.id);
+      setPrivateNoStore(res);
 
       new ApiResponse(
         res,
         HTTP_STATUS.OK,
-        "Notifications marked as read",
-        null,
+        "Unread notification count retrieved successfully.",
+        data,
       ).send();
     } catch (error) {
       next(error);
@@ -95,7 +141,67 @@ export class NotificationController {
   }
 
   /**
-   * Mark all of a user's notifications as read instantly
+   * GET /notifications/:notificationId
+   */
+  public static async getNotification(
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ): Promise<void> {
+    try {
+      const recipientId = getRecipientId(req);
+      const notificationId = getNotificationId(req);
+
+      const data = await notificationInboxService.getNotification(
+        recipientId,
+        notificationId,
+      );
+
+      setPrivateNoStore(res);
+
+      new ApiResponse(
+        res,
+        HTTP_STATUS.OK,
+        "Notification retrieved successfully.",
+        data,
+      ).send();
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * PATCH /notifications/:notificationId/read
+   */
+  public static async markAsRead(
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ): Promise<void> {
+    try {
+      const recipientId = getRecipientId(req);
+      const notificationId = getNotificationId(req);
+
+      const data = await notificationInboxService.markAsRead(
+        recipientId,
+        notificationId,
+      );
+
+      setPrivateNoStore(res);
+
+      new ApiResponse(
+        res,
+        HTTP_STATUS.OK,
+        "Notification marked as read.",
+        data,
+      ).send();
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /notifications/read-all
    */
   public static async markAllAsRead(
     req: Request,
@@ -103,17 +209,107 @@ export class NotificationController {
     next: NextFunction,
   ): Promise<void> {
     try {
-      if (!req.user) {
-        throw new AppError(HTTP_STATUS.UNAUTHORIZED, "Authentication required");
-      }
+      const recipientId = getRecipientId(req);
 
-      await notificationService.markAllAsRead(req.user.id);
+      const data = await notificationInboxService.markAllAsRead(recipientId);
+
+      setPrivateNoStore(res);
 
       new ApiResponse(
         res,
         HTTP_STATUS.OK,
-        "All notifications marked as read",
-        null,
+        "Notifications marked as read.",
+        data,
+      ).send();
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /notifications/:notificationId/dismiss
+   */
+  public static async dismiss(
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ): Promise<void> {
+    try {
+      const recipientId = getRecipientId(req);
+      const notificationId = getNotificationId(req);
+
+      const data = await notificationInboxService.dismiss(
+        recipientId,
+        notificationId,
+      );
+
+      setPrivateNoStore(res);
+
+      new ApiResponse(
+        res,
+        HTTP_STATUS.OK,
+        "Notification dismissed successfully.",
+        data,
+      ).send();
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /notifications/:notificationId/restore
+   */
+  public static async restore(
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ): Promise<void> {
+    try {
+      const recipientId = getRecipientId(req);
+      const notificationId = getNotificationId(req);
+
+      const data = await notificationInboxService.restore(
+        recipientId,
+        notificationId,
+      );
+
+      setPrivateNoStore(res);
+
+      new ApiResponse(
+        res,
+        HTTP_STATUS.OK,
+        "Notification restored successfully.",
+        data,
+      ).send();
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * DELETE /notifications/:notificationId
+   */
+  public static async deleteNotification(
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ): Promise<void> {
+    try {
+      const recipientId = getRecipientId(req);
+      const notificationId = getNotificationId(req);
+
+      const data = await notificationInboxService.deleteNotification(
+        recipientId,
+        notificationId,
+      );
+
+      setPrivateNoStore(res);
+
+      new ApiResponse(
+        res,
+        HTTP_STATUS.OK,
+        "Notification deleted successfully.",
+        data,
       ).send();
     } catch (error) {
       next(error);
